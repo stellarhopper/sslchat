@@ -1,4 +1,3 @@
-
 #include <stdio.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -14,8 +13,6 @@
 #include "openssl/ssl.h"
 #include "openssl/err.h"
 
-
-
 #define MAX_CONNECTS 50
 #define MAXBUFSIZE 2048
 #define MAXUSERNAME 100
@@ -23,12 +20,6 @@
 
 #define FLAG_SENDALL -10
 
-/*
- * You should use a globally declared linked list or an array to 
- * keep track of your connections.  Be sure to manage either properly
- */
-
-//thread function declaration
 void *connection(void *);
 int sendAll (char*, int);
 void connLost(int, char*);
@@ -42,6 +33,8 @@ int addToHist(int id, char *ip, int port, char* user);
 
 pthread_mutex_t myMutex;
 pthread_mutex_t logMutex;
+
+BIO * bio;
 
 typedef struct {
 	int clientId;
@@ -402,10 +395,10 @@ void initAll() {
 	
 	/* Initializing OpenSSL */
 
+	SSL_library_init();
 	SSL_load_error_strings();
 	ERR_load_BIO_strings();
 	OpenSSL_add_all_algorithms();
-
 	
 	pthread_mutex_lock(&(myMutex));
 	for (i=0; i<MAX_CONNECTS; i++) {
