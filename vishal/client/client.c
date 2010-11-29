@@ -1,6 +1,3 @@
-/*
- * Example of client using TCP protocol.
- */
 #include <stdio.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -14,8 +11,6 @@
 #include "openssl/ssl.h"
 #include "openssl/err.h"
 
-
-
 #define MAX_CONNECTS 50
 #define MAXBUFSIZE 2048
 #define MAXUSERNAME 100
@@ -28,6 +23,10 @@ void initAll(void);
 int isInHist(char *usr);
 int delFromHist(int id, char *user);
 int addToHist(int id, char *ip, int port, char* user);
+
+//global variables
+
+BIO * bio;
 
 char* userId = NULL;
 char* statusMsg = NULL;
@@ -405,6 +404,7 @@ void initAll() {
 	
 	/* Initializing OpenSSL */
 
+	SSL_library_init();
 	SSL_load_error_strings();
 	ERR_load_BIO_strings();
 	OpenSSL_add_all_algorithms();
