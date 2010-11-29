@@ -10,6 +10,10 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <pthread.h>
+#include "openssl/bio.h"
+#include "openssl/ssl.h"
+#include "openssl/err.h"
+
 
 
 #define MAX_CONNECTS 50
@@ -398,6 +402,12 @@ void *pm_recvHandler(void *sockid) {
 
 void initAll() {
 	int i = 0;
+	
+	/* Initializing OpenSSL */
+
+	SSL_load_error_strings();
+	ERR_load_BIO_strings();
+	OpenSSL_add_all_algorithms();
 	
 	pthread_mutex_lock(&(myMutex));
 	
