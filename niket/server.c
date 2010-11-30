@@ -39,7 +39,7 @@ typedef struct New_User_List {
 	struct sockaddr_in client_addr;
 	int Listen_Port;
 	BIO *sbio;
-        SSL *ssl;
+	SSL *ssl;
 }New_User_List;
 
 /* typedef struct File_Data{
@@ -211,7 +211,7 @@ int main(int argc,char *argv[])
 		if(setsockopt(newsockfd, SOL_SOCKET, SO_RCVTIMEO,(struct timeval *)&tv,sizeof(struct timeval)) != 0)
 			printf("Timeout Set Error No. %d. The Socket will now work in Blocking Mode.\n", errno);
 		
-			
+		
 		
 		if(newsockfd>0)
 		{
@@ -232,10 +232,10 @@ int main(int argc,char *argv[])
 			}
 			
 			sprintf(send_data,"UID");	
-			
+			//send(newsockfd, send_data,strlen(send_data), 0);
 			SSL_write(Tmp_User.ssl,send_data,strlen(send_data));
 			
-			//send(newsockfd, send_data,strlen(send_data), 0);
+			
 			
 			//bytes_recieved = recv(newsockfd,recv_data,1024,0);
 			bytes_recieved = SSL_read(Tmp_User.ssl,recv_data,1024);
@@ -246,7 +246,7 @@ int main(int argc,char *argv[])
 				
 				if(Verify_Peer(Tmp_User.ssl, &Tmp_User.User_Name[0]) == 1)
 				{
-				
+					
 					sprintf(send_data,"STM");			
 					//send(newsockfd, send_data,strlen(send_data), 0);
 					SSL_write(Tmp_User.ssl, send_data,strlen(send_data));
@@ -256,12 +256,12 @@ int main(int argc,char *argv[])
 					
 					if(bytes_recieved)
 						memcpy(&Tmp_User.User_Status[0],recv_data,bytes_recieved);
-				
+					
 					else {
 						printf("Connection Broken before adding new client.\n");
 						BIO_free_all(Tmp_User.sbio);
 						SSL_shutdown(Tmp_User.ssl);
-						SSL_free(Tmp_User.ssl);
+						//SSL_free(Tmp_User.ssl);
 						close(newsockfd);
 						exit_flag = 1;
 					}
@@ -270,7 +270,7 @@ int main(int argc,char *argv[])
 					//printf("Connection Broken before adding new client.\n");
 					BIO_free_all(Tmp_User.sbio);
 					SSL_shutdown(Tmp_User.ssl);
-					SSL_free(Tmp_User.ssl);
+					//SSL_free(Tmp_User.ssl);
 					close(newsockfd);
 					exit_flag = 1;
 				}
@@ -346,9 +346,7 @@ int main(int argc,char *argv[])
 				
 				sprintf(send_data,"PRT %d",Tmp_User.Listen_Port);			
 				//send(newsockfd, send_data,strlen(send_data), 0);
-				SSL_write(Tmp_User.ssl, send_data,strlen(send_data));
-				
-				
+				SSL_write(Tmp_User.ssl, send_data,strlen(send_data));	
 			}
 		}
     }
@@ -364,7 +362,7 @@ void *connection(void *U_List)
 	New_User_List *User_Data = U_List;
 	int s = User_Data->Socket_ID;
 	BIO *sbio;
-        SSL *ssl;
+	SSL *ssl;
 	
 	sbio =  User_Data->sbio;
 	ssl =  User_Data->ssl;
@@ -423,9 +421,9 @@ void *connection(void *U_List)
 					
 					BIO_free_all(sbio);
 					SSL_shutdown(ssl);
-					SSL_free(ssl);
+					//SSL_free(ssl);
 					close(s);
-
+					
 					pthread_exit(NULL);
 					printf("Shouldn't see this!\n");
 				}
@@ -579,7 +577,7 @@ void *connection(void *U_List)
 			
 			BIO_free_all(sbio);
 			SSL_shutdown(ssl);
-			SSL_free(ssl);
+			//SSL_free(ssl);
 			close(s);
 			
 			pthread_exit(NULL);
@@ -615,7 +613,7 @@ void *connection(void *U_List)
 			
 			BIO_free_all(sbio);
 			SSL_shutdown(ssl);
-			SSL_free(ssl);
+			//SSL_free(ssl);
 			close(s);
 			
 			pthread_exit(NULL);
@@ -643,34 +641,35 @@ SSL_CTX *Initialize_SSL_Context(char *Certificate, char *Private_Key, char *CA_C
 		return 0;
 	}
 	
-	printf("\nLoading certificates...\n");
-
+	printf("\nLoading certificates...");
+	
 	if(!SSL_CTX_use_certificate_file(ctx, Certificate, SSL_FILETYPE_PEM))
 	{
-		printf("\nUnable to load Certificate\n");
+		printf("\nUnable to load Certificate...");
 		ERR_print_errors_fp(stdout);
 		SSL_CTX_free(ctx);
 		return 0;
 	}
 	if(!SSL_CTX_use_PrivateKey_file(ctx, Private_Key, SSL_FILETYPE_PEM))
 	{
-		printf("\nUnable to load Private_Key File\n");
+		printf("Unable to load Private_Key File.\n");
 		ERR_print_errors_fp(stdout);
 		SSL_CTX_free(ctx);
 		return 0;
 	}
 	
+	printf("\nLoading Key File...");
 	if(!SSL_CTX_load_verify_locations(ctx, CA_Certificate, NULL))
 	{
-		printf("\nUnable to load CA Certificate\n");
+		printf("Unable to load CA Certificate\n");
 		ERR_print_errors_fp(stdout);
 		SSL_CTX_free(ctx);
 		return 0;
 	}
 	
-	#if (OPENSSL_VERSION_NUMBER < 0x00905100L)
+#if (OPENSSL_VERSION_NUMBER < 0x00905100L)
 	SSL_CTX_set_verify_depth(ctx,1);
-	#endif
+#endif
 	
 	SSL_CTX_set_verify(ctx,SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,0);
 	printf("\nSSL Initialization completed.\n");
