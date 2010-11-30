@@ -16,8 +16,16 @@
 #include <sys/signal.h>
 #include <pthread.h>
 
+#include "openssl/bio.h"
+#include "openssl/ssl.h"
+#include "openssl/err.h"
+#include <openssl/x509.h>
+
+
+
 #define MAXBUFSIZE 50
 #define MAX_CONNECTS 50
+#define MAX_FILE_SIZE 	1024
 
 struct sockaddr_in Listen_Sock_Addr;
 
@@ -44,8 +52,23 @@ typedef struct New_User_List {
 	int Listen_Port;
 }New_User_List;
 
-//thread function declaration
+/* typedef struct File_Data{
+ FILE *file_ptr;
+ long file_size;
+ char *file_path;
+ char file_buffer[MAX_FILE_SIZE];
+ }File_Data;
+ 
+ File_Data CA_CRT;
+ File_Data Client_CRT;
+ File_Data Client_Private_Key; */
+
+
+//thread / function declaration
 void *connection(void *U_List);
+SSL_CTX *Initialize_SSL_Context(char *Certificate, char *Private_Key, char *CA_Certificate);
+int Verify_Peer(SSL *ssl, char *name);
+//void File_Stat(File_Data *file_data);
 
 
 //global variables
@@ -57,18 +80,46 @@ int User_Count = 0;
 int Free_Count = 0;
 int Main_Count = 0;
 
+char *CA_CRT;
+char *Client_CRT;
+char *Client_Private_Key;
+
+BIO *sbio;
+SSL_CTX *ctx;
+SSL *ssl;
+
+
 int main(int argc, char *argv[])
 
 {
 	int bytes_recieved;  
 	char send_data[1024],recv_data[1024];
+
 	
 	
-	if (argc < 5)
+	if (argc < 8)
 	{
-		printf("./client <user id> <server ip> <server port #> <status_msg>\n");
+		printf("./client <user id> <server ip> <server port #> <CA Certificate Path> <client_certificate_path> <client_private_key_path>  <status_msg>\n");
 		exit(1);
 	}
+	
+	/* 	CA_CRT.file_path = argv[3];
+	 Client_CRT.file_path = argv[4];
+	 Client_Private_Key.file_path = argv[5];
+	 
+	 
+	 File_Stat(&CA_CRT);
+	 File_Stat(&Client_CRT);
+	 File_Stat(&Client_Private_Key); */
+
+	
+	CA_CRT = argv[4];
+	Client_CRT = argv[5];
+	Client_Private_Key = argv[6];
+	
+	ctx = Initialize_SSL_Context(Client_CRT, Client_Private_Key, CA_CRT);
+	
+
 	
 	
 	if ((sock = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
@@ -88,34 +139,60 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 	
-	bytes_recieved=recv(sock,recv_data,1024,0);
+	/* Connect the SSL socket */
+    ssl=SSL_new(ctx);
+    sbio=BIO_new_socket(sock,BIO_NOCLOSE);
+    SSL_set_bio(ssl,sbio,sbio);
+    if(SSL_connect(ssl)<=0)
+	{
+		printf("\nSSL Handshake Error\n");
+		ERR_print_errors_fp(stdout);
+		fflush(stdout);
+		BIO_free_all(sbio);
+		SSL_shutdown(ssl);
+		SSL_free(ssl);
+		close(sock);
+		exit(1);
+	}
+
+    Verify_Peer(ssl, "server");
+
+	
+	
+	//bytes_recieved=recv(sock,recv_data,1024,0);
+	bytes_recieved=SSL_read(ssl,recv_data,1024);
 	recv_data[bytes_recieved] = '\0';
 	
 	if (recv_data[0] == 'U' && recv_data[1] == 'I' && recv_data[2] == 'D')		//'put' command identified. 
 	{
-		send(sock,argv[1],strlen(argv[1]), 0);
+		//send(sock,argv[1],strlen(argv[1]), 0);
+		SSL_write(ssl,argv[1],strlen(argv[1]));
 		
-		bytes_recieved=recv(sock,recv_data,1024,0);
+		//bytes_recieved=recv(sock,recv_data,1024,0);
+		bytes_recieved=SSL_read(ssl,recv_data,1024);
 		recv_data[bytes_recieved] = '\0';
 		
 		if (recv_data[0] == 'S' && recv_data[1] == 'T' && recv_data[2] == 'M')		//'put' command identified. 
 		{
 			int length = 0, i = 0;
-			length += sprintf(send_data + length,"%s",argv[4]);
+			length += sprintf(send_data + length,"%s",argv[7]);
 			
-			for(i=5;i<argc;i++)
+			for(i=8;i<argc;i++)
 				length += sprintf(send_data + length," %s",argv[i]);
 			
-			send(sock,send_data,strlen(send_data), 0);
+			//send(sock,send_data,strlen(send_data), 0);
+			SSL_write(ssl,send_data,strlen(send_data));
 			
-			bytes_recieved=recv(sock,recv_data,1024,0);
+			//bytes_recieved=recv(sock,recv_data,1024,0);
+			bytes_recieved=SSL_read(ssl,recv_data,1024);
 			recv_data[bytes_recieved] = '\0';
 			
 			if(bytes_recieved>0)
 			{
 				printf("\nServer says: %s", recv_data);		//Print Server's Acknowledge.
 				
-				bytes_recieved=recv(sock,recv_data,1024,0);
+				//bytes_recieved=recv(sock,recv_data,1024,0);
+				bytes_recieved=SSL_read(ssl,recv_data,1024);
 				recv_data[bytes_recieved] = '\0';
 				
 				if (recv_data[0] == 'P' && recv_data[1] == 'R' && recv_data[2] == 'T')		//'put' command identified. 
@@ -166,7 +243,8 @@ int main(int argc, char *argv[])
 			if(result == -1)
 			{
 				
-				send(sock,u_id,strlen(u_id), 0);
+				//send(sock,u_id,strlen(u_id), 0);
+				SSL_write(ssl,u_id,strlen(u_id));
 				
 				bzero(isr_data,sizeof(isr_data));
 				recv_flag = 1;
@@ -214,6 +292,7 @@ int main(int argc, char *argv[])
 					}
 					
 					bytes_recieved=recv(sock2,recv_data,1024,0);
+					//bytes_recieved=SSL_read(ssl2,recv_data,1024);
 					recv_data[bytes_recieved] = '\0';
 					
 					if (recv_data[0] == 'U' && recv_data[1] == 'I' && recv_data[2] == 'D')		//'put' command identified. 
@@ -221,6 +300,7 @@ int main(int argc, char *argv[])
 					
 					
 					bytes_recieved=recv(sock2,recv_data,1024,0);
+					//bytes_recieved=SSL_read(ssl2,recv_data,1024);
 					recv_data[bytes_recieved] = '\0';
 					
 					if (recv_data[0] == 'M' && recv_data[1] == 'S' && recv_data[2] == 'G')		//'put' command identified. 
@@ -280,10 +360,14 @@ int main(int argc, char *argv[])
 		}
 		else
 		{			
-			send(sock,send_data,strlen(send_data), 0);
+			//send(sock,send_data,strlen(send_data), 0);
+			SSL_write(ssl,send_data,strlen(send_data));
 		}
 	}
-	
+	BIO_free_all(sbio);
+	SSL_shutdown(ssl);
+	SSL_free(ssl);
+	close(sock);
 	return 0;
 }
 
@@ -298,7 +382,8 @@ void SIGIOHandler(int signalType)		//Socket Data Recv ISR
 	
 	while(1) 
 	{	
-		nbytes = recv(sock,recv_data, 1024, 0);
+		//nbytes = recv(sock,recv_data, 1024, 0);
+		nbytes = SSL_read(ssl,recv_data, 1024);
 		
 		if(nbytes < 0 && errno == EWOULDBLOCK)	break;
 		
@@ -572,4 +657,118 @@ int Check_For_User(char *U_ID)
 	}
 	pthread_mutex_unlock(&mutex);
 	return (-1);
+}
+
+
+
+
+/* void File_Stat(File_Data *file_data)
+ {
+ file_data->file_ptr = fopen(file_data->file_path,"r");
+ if(file_data->file_ptr == NULL || file_data->file_ptr<=0)
+ {
+ printf("File not Found\n");
+ exit(1);
+ }
+ else
+ {
+ file_data->file_size = fread(file_data->file_buffer, 1,MAX_FILE_SIZE, file_data->file_ptr);
+ if(! file_data->file_size)
+ exit(1);
+ 
+ fclose(file_data->file_ptr);
+ }
+ } */
+
+
+SSL_CTX *Initialize_SSL_Context(char *Certificate, char *Private_Key, char *CA_Certificate)
+{
+	SSL_CTX *ctx;
+	
+	/* Global system initialization*/
+	SSL_library_init();
+	SSL_load_error_strings();
+	ERR_load_BIO_strings();
+	ERR_load_SSL_strings();
+	OpenSSL_add_all_algorithms();
+	
+	printf("Attempting to create SSL context... ");
+	ctx = SSL_CTX_new(SSLv23_client_method());
+	if(ctx == NULL)
+	{
+		printf("Failed. Aborting.\n");
+		return 0;
+	}
+	
+	printf("\nLoading certificates...\n");
+
+	if(!SSL_CTX_use_certificate_file(ctx, Certificate, SSL_FILETYPE_PEM))
+	{
+		printf("\nUnable to load Certificate\n");
+		ERR_print_errors_fp(stdout);
+		SSL_CTX_free(ctx);
+		return 0;
+	}
+	if(!SSL_CTX_use_PrivateKey_file(ctx, Private_Key, SSL_FILETYPE_PEM))
+	{
+		printf("\nUnable to load Private_Key File\n");
+		ERR_print_errors_fp(stdout);
+		SSL_CTX_free(ctx);
+		return 0;
+	}
+	
+	if(!SSL_CTX_load_verify_locations(ctx, CA_Certificate, NULL))
+	{
+		printf("\nUnable to load CA Certificate\n");
+		ERR_print_errors_fp(stdout);
+		SSL_CTX_free(ctx);
+		return 0;
+	}
+	#if (OPENSSL_VERSION_NUMBER < 0x00905100L)
+	SSL_CTX_set_verify_depth(ctx,1);
+	#endif
+	
+	SSL_CTX_set_verify(ctx,SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,0);
+	
+	printf("\nSSL Initialization completed.\n");
+	return ctx;
+}
+
+
+int Verify_Peer(SSL *ssl, char *name)
+{
+    X509 *peer;
+    char peer_CN[256];
+    int result;
+	
+	result = SSL_get_verify_result(ssl);
+	
+    
+    if(result!=X509_V_OK)
+	{
+		printf("\nUnable to verify %s Certificate. Verification Result: %d\n",name,result);
+		ERR_print_errors_fp(stdout);
+		return(-1);
+	}
+	
+	/*Check the cert chain. The chain length
+	 is automatically checked by OpenSSL when
+	 we set the verify depth in the ctx */
+	
+    //Check the common name
+    peer=SSL_get_peer_certificate(ssl);
+	
+    X509_NAME_get_text_by_NID
+	(X509_get_subject_name(peer),
+	 NID_commonName, peer_CN, 256);
+	
+	
+    if(strcasecmp(peer_CN,name))
+	{
+		printf("\nUnable to verify client's name:%s name with Certificate Signature: %s. Verification Result: %d\n",name,peer_CN,result);
+		ERR_print_errors_fp(stdout);
+		return(-1);
+	} 
+	fflush(stdout);
+	return (1);
 }
