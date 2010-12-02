@@ -77,8 +77,6 @@ void init_struct()
 	char temp_at_user_id[100]={0};
 	int p;
 	
-	temp_struct->temp_sock=0;
-	temp_struct->temp_ssl=NULL;
 	
 	for(p=0;p<50;p++)
 	{
@@ -220,7 +218,7 @@ int main(int argc, char *argv[])
 	//====================create user terminal====================
 	
 	int_my_priv_port = atoi(my_private_port);
-	r = pthread_create(&th_listen_accept_private, 0, listen_accept_private, (void *)int_my_priv_port);
+	r = pthread_create(&th_listen_accept_private, 0, listen_accept_private, (void *)int_my_priv_port);	//back
 	
 	if (r != 0) 
 	{ 
@@ -381,7 +379,7 @@ int main(int argc, char *argv[])
 }
 
 
-
+//DONE. 1 todo
 void *listen_messages(void *passed_struct)		//this is the thread that receives the message from all
 {
 	one_struct *a_struct = (one_struct *)passed_struct;
@@ -423,9 +421,9 @@ void *listen_messages(void *passed_struct)		//this is the thread that receives t
 				int x,y,myindex;
 				myindex=0;
 			
-				BIO *private_listen_sbio;
-				SSL_CTX *private_listen_ctx;
-				SSL *private_listen_ssl;
+				BIO *private_connect_sbio;
+				SSL_CTX *private_connect_ctx;
+				SSL *private_connect_ssl;
 			
 				
 				//printf("@ type message: %s",recvBuf);
@@ -458,7 +456,7 @@ void *listen_messages(void *passed_struct)		//this is the thread that receives t
 			
 				at_port[myindex]='\0';
 				
-				private_listen_ctx = Initialize_SSL_Context(Client_CRT, Client_Private_Key, CA_CRT);		// Initialize_SSL_Context
+				private_connect_ctx = Initialize_SSL_Context(Client_CRT, Client_Private_Key, CA_CRT);		// Initialize_SSL_Context
 
 				if ((sock_priv = socket(AF_INET, SOCK_STREAM, 0)) == -1) 
 				{
@@ -479,20 +477,41 @@ void *listen_messages(void *passed_struct)		//this is the thread that receives t
 					fflush(stdout);
 				}
 				
+				
+					/* Connect the SSL socket */
+				private_connect_ssl=SSL_new(private_connect_ctx);
+				private_connect_sbio=BIO_new_socket(sock_priv,BIO_NOCLOSE);
+				SSL_set_bio(private_connect_ssl,private_connect_sbio,private_connect_sbio);
+				
+				if(SSL_connect(private_connect_ssl)<=0)
+				{
+					printf("\nSSL Handshake Error\n");
+					ERR_print_errors_fp(stdout);
+					fflush(stdout);
+					BIO_free_all(private_connect_sbio);
+					SSL_shutdown(private_connect_ssl);
+					//SSL_free(ssl);
+					close(sock_priv);
+					exit(1);
+				}
+	
+				Verify_Peer(ssl, "server");		//<<<<<LOOK>>>>>
+
+	
 				int q;
 				for (q=0; q<MAX_CONNECTS; q++) 
 				{
 					if(connection_list[q].sock_descriptor == -1)
 					{
 						connection_list[q].sock_descriptor = sock_priv;
-						//connection_list[q].ssl = ssl_listen_server;
+						connection_list[q].ssl = private_connect_ssl;
 						break;
 					}
 				}
 				printf("\nLOG: Connection established with client %s at port %s",at_ip,at_port);
 			
 				//pthread_create(&th_send_message_private, 0, send_message_private, (void *)sock_priv);
-				transmit_message_private(q);
+				transmit_message_private(q);			
 			printf ("\n%s : ",client_id);
 			fflush(stdout);
 			continue;
@@ -531,9 +550,9 @@ void *listen_accept_private(void *t)
 	
 	BIO *sbio_priv_listen;
 	SSL *ssl_priv_listen;
+	SSL_CTX *listen_priv_ctx;
 	
-	SSL_CTX *listen_ctx;
-	listen_ctx = Initialize_SSL_Context_Server(Client_CRT, Client_Private_Key, CA_CRT);
+	listen_priv_ctx = Initialize_SSL_Context_Server(Client_CRT, Client_Private_Key, CA_CRT);		//Acts as a server
 
 	
 	if ((sock_p = socket(AF_INET, SOCK_STREAM, 0)) == -1) 
@@ -587,9 +606,23 @@ void *listen_accept_private(void *t)
 			fflush(stdout);
 
 			sbio_priv_listen = BIO_new_socket(sock_pi,BIO_NOCLOSE);
-			ssl_priv_listen = SSL_new(listen_ctx);
+			ssl_priv_listen = SSL_new(listen_priv_ctx);
 			SSL_set_bio(ssl_priv_listen,sbio_priv_listen,sbio_priv_listen);
 		
+			  if(SSL_connect(ssl_priv_listen)<=0)
+			{
+				printf("\nSSL Handshake Error\n");
+				ERR_print_errors_fp(stdout);
+				fflush(stdout);
+				BIO_free_all(sbio_priv_listen);
+				SSL_shutdown(ssl_priv_listen);
+				//SSL_free(ssl);
+				close(sock_pi);
+				exit(1);
+			}
+	
+			//Verify_Peer(ssl, "server");		//<<<<<LOOK>>>>>
+	
 			temp_struct->temp_sock = sock_pi;
 			temp_struct->temp_ssl = ssl_priv_listen;
 			
@@ -606,10 +639,10 @@ void *listen_accept_private(void *t)
 
 void *listen_message_private(void *my_temp_struct) 
 {
-	one_struct a_struct = (one_struct) my_temp_struct;
+	one_struct *a_struct = (one_struct *) my_temp_struct;
 	
-	SSL ssl_listen_priv = a_struct.temp_ssl;
-	int sock_listen_priv = a_struct.temp_sock;
+	SSL *ssl_listen_priv = a_struct->temp_ssl;
+	int sock_listen_priv = a_struct->temp_sock;
 	
 	int rec_size;
 	char recv_buf_priv[MAXBUFSIZE]={0};
