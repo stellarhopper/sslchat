@@ -12,6 +12,10 @@
 #include <unistd.h>
 #include <pthread.h>
 
+#include "openssl/bio.h"
+#include "openssl/ssl.h"
+#include "openssl/err.h"
+#include <openssl/x509.h>
 
 #define MAXBUFSIZE 2048
 #define MAX_STATUS_SIZE 500
@@ -32,24 +36,49 @@ void transmit_message_private(int array_id);
 void check_for_disconnect_msg(int buf_size, int del_sock);
 void delete_entry(int sock_to_delete);
 
+SSL_CTX *Initialize_SSL_Context(char *Certificate, char *Private_Key, char *CA_Certificate);
+int Verify_Peer(SSL *ssl, char *name);
+SSL_CTX *Initialize_SSL_Context_Server(char *Certificate, char *Private_Key, char *CA_Certificate);
 
 pthread_t th_listen_message_private;
 pthread_t myth;
 pthread_t th_listen_accept_private;
 pthread_t th_send_message_private;
 
+char *CA_CRT;
+char *Client_CRT;
+char *Client_Private_Key;
+
+BIO *sbio;
+SSL_CTX *ctx;
+SSL *ssl;
+
 typedef struct
 {
 	char at_user_id[100];
 	int sock_descriptor;
+	SSL *ssl;
 }mylist;
 
 mylist connection_list[MAX_CONNECTS];
+
+
+typedef struct
+{
+	int temp_sock;
+	SSL *temp_ssl;
+}one_struct;
+
+one_struct *temp_struct;
+
 
 void init_struct()
 {
 	char temp_at_user_id[100]={0};
 	int p;
+	
+	temp_struct->temp_sock=0;
+	temp_struct->temp_ssl=NULL;
 	
 	for(p=0;p<50;p++)
 	{
@@ -58,6 +87,8 @@ void init_struct()
 	}
 
 }
+
+
 
 int main(int argc, char *argv[]) 
 {
@@ -81,18 +112,20 @@ int main(int argc, char *argv[])
 
 	int int_my_priv_port=0;
 	
-	if (argc < 6) 
-	{					//   0       1		   2            3                4					5
-		printf("\nUSAGE:  ./client <user id> <server ip> <server port #> <Your Private Port> <status_msg>\n");
+	if (argc < 8) 
+	{					//   0       1		   2            3                		4					5					6				7					8	
+		printf("\nUSAGE:  ./client <user id> <server ip> <server port #> <Your Private Port>  <CA Certificate Path> <client_certificate_path> <client_private_key_path>  <status_msg>\n");
 		exit(1);
 	}
 	
-	for (i=5; i<argc ; i++) 
+	for (i=8; i<argc ; i++) 
 	{
 		strcat(statusMsg,argv[i]);
+		
 		if(i != argc-1)
 		   strcat(statusMsg," ");
 	}
+	
 	i=0;
 	
 	client_id = (char*) malloc (strlen(argv[1]) + 1);
@@ -100,19 +133,29 @@ int main(int argc, char *argv[])
 	
 	strcpy(my_private_port, argv[4]);	
 	
+	CA_CRT = argv[5];
+	Client_CRT = argv[6];
+	Client_Private_Key = argv[7];
+	
+	ctx = Initialize_SSL_Context(Client_CRT, Client_Private_Key, CA_CRT);
+
+
+	init_struct();
+
 	//====================Setup sockets=============================================================
 	
+	//Socket function called. Creat a socket to connect to server
 	if ((sock = socket(AF_INET, SOCK_STREAM, 0)) == -1) 
 	{
 		perror("Socket");
 		exit(1);
 	}
 	
+	//fill struct for conencting to server
 	server_addr.sin_family = AF_INET;     
 	server_addr.sin_port = htons(atoi(argv[3]));   
 	server_addr.sin_addr.s_addr = inet_addr(argv[2]);
 	bzero(&(server_addr.sin_zero),8); 
-
 	retval=-1;
 	
 	//try to connect over & over till success
@@ -127,12 +170,34 @@ int main(int argc, char *argv[])
 			sleep(5);
 		}		
 	}
-		
+	
+	/* Connect the SSL socket */
+	ssl=SSL_new(ctx);
+	sbio=BIO_new_socket(sock,BIO_NOCLOSE);
+	SSL_set_bio(ssl,sbio,sbio);
+	
+	if(SSL_connect(ssl)<=0)
+	{
+		printf("\nSSL Handshake Error\n");
+		ERR_print_errors_fp(stdout);
+		fflush(stdout);
+		BIO_free_all(sbio);
+		SSL_shutdown(ssl);
+		//SSL_free(ssl);
+		close(sock);
+		exit(1);
+	}
+	
+	Verify_Peer(ssl, "server");
+	
 	printf("\nLOG: Connection established with server\n");
 	
-	init_struct();
+	temp_struct->temp_sock = sock;
+	temp_struct->temp_ssl = ssl;
 	
-	r = pthread_create(&myth, 0, listen_messages, (void *)sock);
+	//r = pthread_create(&myth, 0, listen_messages, (void *)sock);
+	r = pthread_create(&myth, 0, listen_messages, (void *)temp_struct);		//left here A
+	
 	if (r != 0) 
 	{ 
 		fprintf(stderr, "Thread create failed\n"); 
@@ -149,12 +214,14 @@ int main(int argc, char *argv[])
 	strcat(sendBuf,statusMsg);
 
 
-	send(sock,sendBuf,strlen(sendBuf), 0);
-
+	//send(sock,sendBuf,strlen(sendBuf), 0);
+	SSL_write(ssl,sendBuf,strlen(sendBuf));
+	
 	//====================create user terminal====================
 	
 	int_my_priv_port = atoi(my_private_port);
 	r = pthread_create(&th_listen_accept_private, 0, listen_accept_private, (void *)int_my_priv_port);
+	
 	if (r != 0) 
 	{ 
 		fprintf(stderr, "Thread create failed\n"); 
@@ -180,8 +247,9 @@ int main(int argc, char *argv[])
 		{
 			
 			strcpy(sendBuf, cmd);
-			send(sock,sendBuf,strlen(sendBuf), 0);
-
+			//send(sock,sendBuf,strlen(sendBuf), 0);
+			SSL_write(ssl,sendBuf,strlen(sendBuf));
+			
 			printf ("\nLOG: Exiting");
 			fflush(stdout);
 			kill_flag = 1;
@@ -190,7 +258,8 @@ int main(int argc, char *argv[])
 		else if(strncmp(cmd, "/display", 8) == 0)		//for display command
 		{
 			strcpy(sendBuf, cmd);
-			send(sock,sendBuf,strlen(sendBuf), 0);
+			//send(sock,sendBuf,strlen(sendBuf), 0);
+			SSL_write(ssl,sendBuf,strlen(sendBuf));
 
 			printf ("\nDisplaying ChatRoom Participant List...\nFormat: {<Status ID>:< Status Message>}");
 			fflush(stdout);
@@ -219,7 +288,8 @@ int main(int argc, char *argv[])
 			statusMsg[ind+1]='\0';
 			
 			strcpy(sendBuf, cmd);
-			send(sock,sendBuf,strlen(sendBuf), 0);
+			//send(sock,sendBuf,strlen(sendBuf), 0);
+			SSL_write(ssl,sendBuf,strlen(sendBuf));
 			
 			printf ("\nLOG: Changing Status Message");
 			fflush(stdout);
@@ -284,7 +354,9 @@ int main(int argc, char *argv[])
 							strcpy(connection_list[q].at_user_id , sendBuf);
 						}
 					}
-					send(sock,sendBuf,strlen(sendBuf), 0);
+					//send(sock,sendBuf,strlen(sendBuf), 0);
+					SSL_write(ssl,sendBuf,strlen(sendBuf));
+
 					printf ("\nLOG: Requesting connection to client");
 			}
 			else 
@@ -301,16 +373,23 @@ int main(int argc, char *argv[])
 
 		bzero(sendBuf,MAXBUFSIZE); 
 		strcpy(sendBuf, cmd);
-		send(sock,sendBuf,strlen(sendBuf), 0);
+		//send(sock,sendBuf,strlen(sendBuf), 0);
+		SSL_write(ssl,sendBuf,strlen(sendBuf));
+		
 	}
     return 0;
 }
 
 
 
-void *listen_messages(void *sockid)		//this is the thread that receives the message from all
+void *listen_messages(void *passed_struct)		//this is the thread that receives the message from all
 {
-    int s = (int)sockid;
+	one_struct *a_struct = (one_struct *)passed_struct;
+	
+	//int s = (int)sockid;
+	int s = a_struct->temp_sock;
+	SSL *ssl_listen_server= a_struct->temp_ssl;
+		
 	int rc;
 	
 	pthread_detach(pthread_self());  //automatically clears the threads memory on exit
@@ -319,7 +398,9 @@ void *listen_messages(void *sockid)		//this is the thread that receives the mess
 	{
 		//printf("Waiting on recv\n");
 		bzero(recvBuf,MAXBUFSIZE); 
-		rc = recv(s, recvBuf, MAXBUFSIZE, 0);
+		//rc = recv(s, recvBuf, MAXBUFSIZE, 0);
+		rc = SSL_read(ssl_listen_server, recvBuf, MAXBUFSIZE);
+
 		if(rc == 0)
 		{
 			printf("\nERROR: Connection Lost");
@@ -327,20 +408,25 @@ void *listen_messages(void *sockid)		//this is the thread that receives the mess
 			pthread_exit(NULL);
 		}
 		
-		check_for_disconnect_msg(rc,s);
+		check_for_disconnect_msg(rc,s);		// left here B
 		
-		if (! strncmp(recvBuf,"@",1)) 
+		if (! strncmp(recvBuf,"@",1)) 			//Server sends info in form of @maulik:127.0.0.1:5677
 		{
 				struct sockaddr_in server_addr_priv;  
 				int sock_priv=0;
+				int exit_at_loop =0;
 			
-			int exit_at_loop =0;
 				//parse ip address & port number in the feilds at_ip & at_port
 				char at_ip[20];
 				char at_port[7];
 				
 				int x,y,myindex;
 				myindex=0;
+			
+				BIO *private_listen_sbio;
+				SSL_CTX *private_listen_ctx;
+				SSL *private_listen_ssl;
+			
 				
 				//printf("@ type message: %s",recvBuf);
 				if (recvBuf[1] == ':')
@@ -372,6 +458,8 @@ void *listen_messages(void *sockid)		//this is the thread that receives the mess
 			
 				at_port[myindex]='\0';
 				
+				private_listen_ctx = Initialize_SSL_Context(Client_CRT, Client_Private_Key, CA_CRT);		// Initialize_SSL_Context
+
 				if ((sock_priv = socket(AF_INET, SOCK_STREAM, 0)) == -1) 
 				{
 					perror("Socket");
@@ -397,6 +485,7 @@ void *listen_messages(void *sockid)		//this is the thread that receives the mess
 					if(connection_list[q].sock_descriptor == -1)
 					{
 						connection_list[q].sock_descriptor = sock_priv;
+						//connection_list[q].ssl = ssl_listen_server;
 						break;
 					}
 				}
@@ -421,7 +510,7 @@ void *listen_messages(void *sockid)		//this is the thread that receives the mess
 
 void *listen_accept_private(void *t) 
 {
-    int port_to_listen = (int)t;
+	int port_to_listen = (int)t;
 	
 	pthread_detach(pthread_self());  //automatically clears the threads memory on exit
 	
@@ -439,6 +528,13 @@ void *listen_accept_private(void *t)
 	int sock_p=0;
 	int sock_pi=0;
 	int r=0;
+	
+	BIO *sbio_priv_listen;
+	SSL *ssl_priv_listen;
+	
+	SSL_CTX *listen_ctx;
+	listen_ctx = Initialize_SSL_Context_Server(Client_CRT, Client_Private_Key, CA_CRT);
+
 	
 	if ((sock_p = socket(AF_INET, SOCK_STREAM, 0)) == -1) 
 	{
@@ -476,8 +572,8 @@ void *listen_accept_private(void *t)
 	
 	
 	//start_connections
-    for ( ; ; ) //endless loop
-    {
+	for ( ; ; ) //endless loop
+	{
 		
 		bzero(&client_addr_p, client_len);
 		sock_pi = accept(sock_p, (struct sockaddr *)&client_addr_p,&client_len);
@@ -490,7 +586,14 @@ void *listen_accept_private(void *t)
 			printf("\nLOG: Connection successfully established");
 			fflush(stdout);
 
-			r = pthread_create(&th_listen_message_private, 0, listen_message_private, (void *)sock_pi);
+			sbio_priv_listen = BIO_new_socket(sock_pi,BIO_NOCLOSE);
+			ssl_priv_listen = SSL_new(listen_ctx);
+			SSL_set_bio(ssl_priv_listen,sbio_priv_listen,sbio_priv_listen);
+		
+			temp_struct->temp_sock = sock_pi;
+			temp_struct->temp_ssl = ssl_priv_listen;
+			
+			r = pthread_create(&th_listen_message_private, 0, listen_message_private, (void *)temp_struct);
 			if (r != 0) 
 			{ 
 				fprintf(stderr, "Thread create failed\n"); 
@@ -501,11 +604,14 @@ void *listen_accept_private(void *t)
 }
 
 
-void *listen_message_private(void *port_listen) 
+void *listen_message_private(void *my_temp_struct) 
 {
-	int sock_listen_priv = (int)port_listen;
-	int rec_size;
+	one_struct a_struct = (one_struct) my_temp_struct;
 	
+	SSL ssl_listen_priv = a_struct.temp_ssl;
+	int sock_listen_priv = a_struct.temp_sock;
+	
+	int rec_size;
 	char recv_buf_priv[MAXBUFSIZE]={0};
 	
 	pthread_detach(pthread_self()); 
@@ -516,7 +622,9 @@ void *listen_message_private(void *port_listen)
 	while(1)
 	{
 		bzero(recv_buf_priv,MAXBUFSIZE);
-		rec_size = recv(sock_listen_priv, recv_buf_priv, MAXBUFSIZE, 0);
+		//rec_size = recv(sock_listen_priv, recv_buf_priv, MAXBUFSIZE, 0);
+		rec_size = SSL_read(ssl_listen_priv, recv_buf_priv, MAXBUFSIZE);
+
 		if(rec_size == 0)
 		{
 			printf("\nERROR: Connection Lost");
@@ -551,7 +659,10 @@ void transmit_message_private(int array_id)
 	//printf("Sending from me: %s\n",my_buffer);
 	fflush(stdout);
 	
-	send(connection_list[array_id].sock_descriptor , my_buffer, strlen(my_buffer), 0);
+	
+	//send(connection_list[array_id].sock_descriptor , my_buffer, strlen(my_buffer), 0);
+	SSL_write(connection_list[array_id].ssl , my_buffer, strlen(my_buffer));
+
 }
 
 void check_for_disconnect_msg(int buf_size, int del_sock)
@@ -560,10 +671,7 @@ void check_for_disconnect_msg(int buf_size, int del_sock)
 	char removed_str[]="Removed.";
 	int k=0;
 	char *cptr = NULL;
-	
 	char *temp_ptr = NULL;
-	
-
 	
 		if((strstr(recvBuf,left_str) != NULL) || (strstr(recvBuf,removed_str) != NULL))
 		{
@@ -590,6 +698,10 @@ void check_for_disconnect_msg(int buf_size, int del_sock)
 }
 
 
+
+
+
+
 void delete_entry(int sock_to_delete)
 {
 	int k=0;
@@ -601,10 +713,162 @@ void delete_entry(int sock_to_delete)
 		{
 			printf("\nLOG: Entry for %s successfully Deleted",connection_list[k].at_user_id);
 			connection_list[k].sock_descriptor = -1;
+			connection_list[k].ssl = NULL;
 			bzero(connection_list[k].at_user_id , 100);
 			
 		}
 	}
 	
 	
+}
+
+
+
+SSL_CTX *Initialize_SSL_Context(char *Certificate, char *Private_Key, char *CA_Certificate)
+{
+	SSL_CTX *ctx;
+	
+	/* Global system initialization*/
+	SSL_library_init();
+	SSL_load_error_strings();
+	ERR_load_BIO_strings();
+	ERR_load_SSL_strings();
+	OpenSSL_add_all_algorithms();
+	
+	printf("Attempting to create SSL context... ");
+	ctx = SSL_CTX_new(SSLv23_client_method());
+	if(ctx == NULL)
+	{
+		printf("Failed. Aborting.\n");
+		return 0;
+	}
+	
+	printf("\nLoading certificates...");
+	
+	if(!SSL_CTX_use_certificate_file(ctx, Certificate, SSL_FILETYPE_PEM))
+	{
+		printf("\nUnable to load Certificate...");
+		ERR_print_errors_fp(stdout);
+		SSL_CTX_free(ctx);
+		return 0;
+	}
+	if(!SSL_CTX_use_PrivateKey_file(ctx, Private_Key, SSL_FILETYPE_PEM))
+	{
+		printf("Unable to load Private_Key File.\n");
+		ERR_print_errors_fp(stdout);
+		SSL_CTX_free(ctx);
+		return 0;
+	}
+	
+	printf("\nLoading Key File...");
+	if(!SSL_CTX_load_verify_locations(ctx, CA_Certificate, NULL))
+	{
+		printf("Unable to load CA Certificate\n");
+		ERR_print_errors_fp(stdout);
+		SSL_CTX_free(ctx);
+		return 0;
+	}
+	
+#if (OPENSSL_VERSION_NUMBER < 0x00905100L)
+	SSL_CTX_set_verify_depth(ctx,1);
+#endif
+	
+	SSL_CTX_set_verify(ctx,SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,0);
+	printf("\nSSL Initialization completed.\n");
+	
+	return ctx;
+}
+
+
+int Verify_Peer(SSL *ssl, char *name)
+{
+    X509 *peer;
+    char peer_CN[256];
+    int result;
+	
+	result = SSL_get_verify_result(ssl);
+
+    
+    if(result!=X509_V_OK)
+	{
+		printf("\nUnable to verify %s Certificate. Verification Result: %d\n",name,result);
+		ERR_print_errors_fp(stdout);
+		return(-1);
+	}
+	
+	/*Check the cert chain. The chain length
+	 is automatically checked by OpenSSL when
+	 we set the verify depth in the ctx */
+	
+    //Check the common name
+    peer=SSL_get_peer_certificate(ssl);
+	
+    X509_NAME_get_text_by_NID
+	(X509_get_subject_name(peer),
+	 NID_commonName, peer_CN, 256);
+	
+	
+    if(strcasecmp(peer_CN,name))
+	{
+		printf("\nUnable to verify client's name:%s  with Certificate Signature: %s. Verification Result: %d\n",name,peer_CN,result);
+		ERR_print_errors_fp(stdout);
+		return(-1);
+	} 
+	fflush(stdout);
+	return (1);
+}
+
+SSL_CTX *Initialize_SSL_Context_Server(char *Certificate, char *Private_Key, char *CA_Certificate)
+{
+	SSL_CTX *ctx;
+	
+	/* Global system initialization*/
+	SSL_library_init();
+	SSL_load_error_strings();
+	ERR_load_BIO_strings();
+	ERR_load_SSL_strings();
+	OpenSSL_add_all_algorithms();
+	
+	printf("Attempting to create SSL context... ");
+	ctx = SSL_CTX_new(SSLv23_server_method());
+	if(ctx == NULL)
+	{
+		printf("Failed. Aborting.\n");
+		return 0;
+	}
+	
+	printf("\nLoading certificates...");
+	
+	if(!SSL_CTX_use_certificate_file(ctx, Certificate, SSL_FILETYPE_PEM))
+	{
+		printf("\nUnable to load Certificate...");
+		ERR_print_errors_fp(stdout);
+		SSL_CTX_free(ctx);
+		return 0;
+	}
+	if(!SSL_CTX_use_PrivateKey_file(ctx, Private_Key, SSL_FILETYPE_PEM))
+	{
+		printf("Unable to load Private_Key File.\n");
+		ERR_print_errors_fp(stdout);
+		SSL_CTX_free(ctx);
+		return 0;
+	}
+	
+	printf("\nLoading Key File...");
+	if(!SSL_CTX_load_verify_locations(ctx, CA_Certificate, NULL))
+	{
+		printf("Unable to load CA Certificate\n");
+		ERR_print_errors_fp(stdout);
+		SSL_CTX_free(ctx);
+		return 0;
+	}
+	
+#if (OPENSSL_VERSION_NUMBER < 0x00905100L)
+	SSL_CTX_set_verify_depth(ctx,1);
+#endif
+	
+	SSL_CTX_set_verify(ctx,SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,0);
+	printf("\nSSL Initialization completed.\n");
+	
+	return ctx;
 }
