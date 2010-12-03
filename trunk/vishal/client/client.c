@@ -63,7 +63,7 @@ typedef struct {
 	SSL *pSsl;
 }pInfo;
 
-pInfo pObject;
+pInfo *pObject;
 
 clientInfo thisClient[MAX_CONNECTS];
 int clientIdx = 0;
@@ -95,7 +95,7 @@ int main(int argc, char *argv[]) {
 
 	initAll();
 
-	if (argc < 9) {	   //   0       1		   2            3                4							5						6							7				   8
+	if (argc < 10) {	   //   0       1		   2            3                4							5						6							7				   8
 		printf("USAGE: ./client <user id> <server ip> <server port #> <private listen port#> <CA Certificate Path> <client_certificate_path> <client_private_key_path> <status_msg>\n");
 		exit(1);
 	}
