@@ -257,7 +257,9 @@ int main(int argc, char *argv[]) {
 
 						printf("Client info for %s retrieved from database\n", locUsr);
 						loc_pm_sock = retval;
-						send(loc_pm_sock, pm_sendBuf, strlen(pm_sendBuf), 0);
+						thisClient[sockToIdxHist(loc_pm_sock)].ssl
+						//send(loc_pm_sock, pm_sendBuf, strlen(pm_sendBuf), 0);
+						SSL_write(thisClient[sockToIdxHist(loc_pm_sock)].ssl, pm_sendBuf, strlen(pm_sendBuf));
 					}
 				}
 			}
@@ -268,7 +270,8 @@ int main(int argc, char *argv[]) {
 			fflush(stdout);
 			bzero(sendBuf,MAXBUFSIZE);
 			strcpy(sendBuf, cmd);
-			send(sock,sendBuf,strlen(sendBuf), 0);
+			//send(sock,sendBuf,strlen(sendBuf), 0);
+			SSL_write(ssl,sendBuf,strlen(sendBuf));
 			killFlag = 1;
 			break;
 		}
@@ -276,7 +279,8 @@ int main(int argc, char *argv[]) {
 		else if(!killFlag) {
 			bzero(sendBuf,MAXBUFSIZE);
 			strcpy(sendBuf, cmd);
-			send(sock,sendBuf,strlen(sendBuf), 0);
+			//send(sock,sendBuf,strlen(sendBuf), 0);
+			SSL_write(ssl,sendBuf,strlen(sendBuf));
 		}
 
 	}while(killFlag == 0);
@@ -308,7 +312,8 @@ void *recvHandler(void *pObj) {
 
 	while(!killFlag) {
 		bzero(recvBuf, MAXBUFSIZE);
-		sz_recv = recv(s, recvBuf, MAXBUFSIZE, 0);
+		//sz_recv = recv(s, recvBuf, MAXBUFSIZE, 0);
+		sz_recv = SSL_read(rec_ssl, recvBuf, MAXBUFSIZE);
 
 		if(sz_recv == 0) {
 			//connection lost; server died
@@ -390,10 +395,11 @@ void *recvHandler(void *pObj) {
 //*****				//TODO: verify with parsed name
 					
 				//send the data
-				send(pm_connectSock, pm_sendBuf, strlen(pm_sendBuf), 0);
+				//send(pm_connectSock, pm_sendBuf, strlen(pm_sendBuf), 0);
+				SSL_write(pm_ssl, pm_sendBuf, strlen(pm_sendBuf));
 
 				//save client info for future use
-				retval = addToHist(pm_connectSock, locIp, connectPort, locUsr);
+				retval = addToHist(pm_connectSock, locIp, connectPort, locUsr, pm_ssl);
 				if(retval) {
 					//printf("Client %s saved\n", locUsr);
 				}
@@ -493,7 +499,8 @@ void *pm_recvHandler(void *pObj) {
 
 	while(!killFlag) {
 		bzero(recvBuf, MAXBUFSIZE);
-		sz_recv = recv(s, recvBuf, MAXBUFSIZE, 0);
+		//sz_recv = recv(s, recvBuf, MAXBUFSIZE, 0);
+		sz_recv = SSL_read(pm_ssl, recvBuf, MAXBUFSIZE);
 
 		if(sz_recv == 0) {
 			//connection lost; pm_client died
@@ -592,7 +599,7 @@ int delFromHist(int id, char *user) {
 	return removed;
 }
 
-int addToHist(int id, char *ip, int port, char* user) {
+int addToHist(int id, char *ip, int port, char *user, SSL *ssl) {
 	int added = -1;
 	int tries = 200;
 
@@ -611,6 +618,7 @@ int addToHist(int id, char *ip, int port, char* user) {
 			thisClient[clientIdx].listenPort = port;
 			bzero(thisClient[clientIdx].username, strlen(thisClient[clientIdx].username));
 			strcpy(thisClient[clientIdx].username, user);
+			thisClient[clientIdx].ssl = ssl;
 			printf("Adding User to database %s\n", thisClient[clientIdx].username);
 			added = 1;
 			break;
@@ -629,8 +637,7 @@ int addToHist(int id, char *ip, int port, char* user) {
 
 
 
-SSL_CTX *Initialize_SSL_Context(char *Certificate, char *Private_Key, char *CA_Certificate)
-{
+SSL_CTX *Initialize_SSL_Context(char *Certificate, char *Private_Key, char *CA_Certificate) {
 	SSL_CTX *ctx;
 	
 	/* Global system initialization*/
@@ -684,9 +691,7 @@ SSL_CTX *Initialize_SSL_Context(char *Certificate, char *Private_Key, char *CA_C
 	return ctx;
 }
 
-
-int Verify_Peer(SSL *ssl, char *name)
-{
+int Verify_Peer(SSL *ssl, char *name) {
     X509 *peer;
     char peer_CN[256];
     int result;
@@ -723,8 +728,7 @@ int Verify_Peer(SSL *ssl, char *name)
 	return (1);
 }
 
-SSL_CTX *Initialize_SSL_Context_Server(char *Certificate, char *Private_Key, char *CA_Certificate)
-{
+SSL_CTX *Initialize_SSL_Context_Server(char *Certificate, char *Private_Key, char *CA_Certificate) {
 	SSL_CTX *ctx;
 	
 	/* Global system initialization*/
