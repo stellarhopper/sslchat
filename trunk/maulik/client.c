@@ -69,7 +69,7 @@ typedef struct
 	SSL *temp_ssl;
 }one_struct;
 
-one_struct *temp_struct;
+one_struct temp_struct;
 
 
 void init_struct()
@@ -180,8 +180,8 @@ int main(int argc, char *argv[])
 		ERR_print_errors_fp(stdout);
 		fflush(stdout);
 		BIO_free_all(sbio);
-		SSL_shutdown(ssl);
-		//SSL_free(ssl);
+		//SSL_shutdown(ssl);
+		SSL_free(ssl);
 		close(sock);
 		exit(1);
 	}
@@ -190,11 +190,11 @@ int main(int argc, char *argv[])
 	
 	printf("\nLOG: Connection established with server\n");
 	
-	temp_struct->temp_sock = sock;
-	temp_struct->temp_ssl = ssl;
+	temp_struct.temp_sock = sock;
+	temp_struct.temp_ssl = ssl;
 	
 	//r = pthread_create(&myth, 0, listen_messages, (void *)sock);
-	r = pthread_create(&myth, 0, listen_messages, (void *)temp_struct);		//left here A
+	r = pthread_create(&myth, 0, listen_messages, (void *)&temp_struct);		//left here A
 	
 	if (r != 0) 
 	{ 
@@ -477,11 +477,16 @@ void *listen_messages(void *passed_struct)		//this is the thread that receives t
 					fflush(stdout);
 				}
 				
+				/*
+				BIO *private_connect_sbio;
+				SSL_CTX *private_connect_ctx;
+				SSL *private_connect_ssl;
+				*/
 				
 					/* Connect the SSL socket */
 				private_connect_ssl=SSL_new(private_connect_ctx);
-				private_connect_sbio=BIO_new_socket(sock_priv,BIO_NOCLOSE);
-				SSL_set_bio(private_connect_ssl,private_connect_sbio,private_connect_sbio);
+				private_connect_sbio=BIO_new_socket(sock_priv , BIO_NOCLOSE);
+				SSL_set_bio(private_connect_ssl , private_connect_sbio , private_connect_sbio);
 				
 				if(SSL_connect(private_connect_ssl)<=0)
 				{
@@ -600,6 +605,11 @@ void *listen_accept_private(void *t)
 		//char* cIP = inet_ntoa(client_addr.sin_addr);
 		//strcpy(cli_IP,cIP);
 
+		//BIO *sbio_priv_listen;
+		//SSL *ssl_priv_listen;
+		//SSL_CTX *listen_priv_ctx;
+	
+		
 		if(sock_pi != -1)	
 		{
 			printf("\nLOG: Connection successfully established");
@@ -607,9 +617,9 @@ void *listen_accept_private(void *t)
 
 			sbio_priv_listen = BIO_new_socket(sock_pi,BIO_NOCLOSE);
 			ssl_priv_listen = SSL_new(listen_priv_ctx);
-			SSL_set_bio(ssl_priv_listen,sbio_priv_listen,sbio_priv_listen);
+			SSL_set_bio(ssl_priv_listen , sbio_priv_listen , sbio_priv_listen);
 		
-			  if(SSL_connect(ssl_priv_listen)<=0)
+			  if(SSL_accept(ssl_priv_listen)<=0)
 			{
 				printf("\nSSL Handshake Error\n");
 				ERR_print_errors_fp(stdout);
@@ -623,10 +633,10 @@ void *listen_accept_private(void *t)
 	
 			//Verify_Peer(ssl, "server");		//<<<<<LOOK>>>>>
 	
-			temp_struct->temp_sock = sock_pi;
-			temp_struct->temp_ssl = ssl_priv_listen;
+			temp_struct.temp_sock = sock_pi;
+			temp_struct.temp_ssl = ssl_priv_listen;
 			
-			r = pthread_create(&th_listen_message_private, 0, listen_message_private, (void *)temp_struct);
+			r = pthread_create(&th_listen_message_private, 0, listen_message_private, (void *)&temp_struct);
 			if (r != 0) 
 			{ 
 				fprintf(stderr, "Thread create failed\n"); 
@@ -760,7 +770,7 @@ void delete_entry(int sock_to_delete)
 SSL_CTX *Initialize_SSL_Context(char *Certificate, char *Private_Key, char *CA_Certificate)
 {
 	SSL_CTX *ctx;
-	
+	printf("Entered Initialize_SSL_Context\n");
 	/* Global system initialization*/
 	SSL_library_init();
 	SSL_load_error_strings();
@@ -854,7 +864,8 @@ int Verify_Peer(SSL *ssl, char *name)
 SSL_CTX *Initialize_SSL_Context_Server(char *Certificate, char *Private_Key, char *CA_Certificate)
 {
 	SSL_CTX *ctx;
-	
+		printf("Entered Initialize_SSL_Context_server\n");
+
 	/* Global system initialization*/
 	SSL_library_init();
 	SSL_load_error_strings();
