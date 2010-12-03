@@ -28,7 +28,7 @@ void *pm_recvHandler(void *);
 void initAll(void);
 int isInHist(char *usr);
 int delFromHist(int id, char *user);
-int addToHist(int id, char *ip, int port, char* user);
+int addToHist(int id, char *ip, int port, char* user, SSL *ssl);
 int sockToIdxHist(int sock);
 
 //SSL functions
@@ -63,7 +63,7 @@ typedef struct {
 	SSL *pSsl;
 }pInfo;
 
-pInfo *pObject;
+pInfo pObject;
 
 clientInfo thisClient[MAX_CONNECTS];
 int clientIdx = 0;
@@ -95,7 +95,7 @@ int main(int argc, char *argv[]) {
 
 	initAll();
 
-	if (argc < 10) {	   //   0       1		   2            3                4							5						6							7				   8
+	if (argc < 9) {	   //   0       1		   2            3                4							5						6							7				   8
 		printf("USAGE: ./client <user id> <server ip> <server port #> <private listen port#> <CA Certificate Path> <client_certificate_path> <client_private_key_path> <status_msg>\n");
 		exit(1);
 	}
@@ -192,9 +192,9 @@ int main(int argc, char *argv[]) {
 
 	//====================create user terminal======================================================
 
-	pObject->pSock = sock;
-	pObject->pSsl = ssl;
-	retval = pthread_create(&th, 0, recvHandler, (void *)pObject);
+	pObject.pSock = sock;
+	pObject.pSsl = ssl;
+	retval = pthread_create(&th, 0, recvHandler, (void *)&pObject);
 	if (retval != 0) {
 		fprintf(stdout, "thread create failed\n");
 	}
@@ -257,7 +257,6 @@ int main(int argc, char *argv[]) {
 
 						printf("Client info for %s retrieved from database\n", locUsr);
 						loc_pm_sock = retval;
-						thisClient[sockToIdxHist(loc_pm_sock)].ssl
 						//send(loc_pm_sock, pm_sendBuf, strlen(pm_sendBuf), 0);
 						SSL_write(thisClient[sockToIdxHist(loc_pm_sock)].ssl, pm_sendBuf, strlen(pm_sendBuf));
 					}
@@ -296,7 +295,7 @@ int main(int argc, char *argv[]) {
 void *recvHandler(void *pObj) {
 	pInfo *pObjectL = (pInfo*)pObj;
 	
-	int s = pObjectL->pSock;
+	//int s = pObjectL->pSock;
 	SSL *rec_ssl = pObjectL->pSsl;
 	
 	char recvBuf[MAXBUFSIZE];
@@ -356,7 +355,7 @@ void *recvHandler(void *pObj) {
 			locPort[i] = 0;
 			connectPort = atoi(locPort);
 
-			//printf("@ message from server: user = %s, ip = %s, port = %d\n", locUsr, locIp, connectPort);
+			printf("@ message from server: user = %s, ip = %s, port = %d\n", locUsr, locIp, connectPort);
 
 
 			pm_client_addr.sin_family = AF_INET;
@@ -372,14 +371,16 @@ void *recvHandler(void *pObj) {
 			retval = connect(pm_connectSock, (struct sockaddr *)&pm_client_addr, sizeof(struct sockaddr));
 			if (retval == -1) {
 				perror("Connect");
+				printf("Error: %d s=%d\n", errno, pm_connectSock);
+				fflush(stdout);
 			}
 			else {
 			
 				pm_ctx = Initialize_SSL_Context(Client_CRT, Client_Private_Key, CA_CRT);
 				/* Connect the SSL socket */
 				pm_ssl=SSL_new(pm_ctx);
-				pm_sbio=BIO_new_socket(sock,BIO_NOCLOSE);
-				SSL_set_bio(pm_ssl,pm_sbio,pm_sbio);
+				pm_sbio=BIO_new_socket(pm_connectSock, BIO_NOCLOSE);
+				SSL_set_bio(pm_ssl, pm_sbio, pm_sbio);
 				if(SSL_connect(pm_ssl)<=0)
 				{
 					printf("\nSSL Handshake Error\n");
@@ -388,7 +389,7 @@ void *recvHandler(void *pObj) {
 					BIO_free_all(pm_sbio);
 					SSL_shutdown(pm_ssl);
 					//SSL_free(pm_ssl);
-					close(sock);
+					close(pm_connectSock);
 					exit(1);
 				}
 				//Verify_Peer(pm_ssl, "server");
@@ -451,7 +452,7 @@ void *pm_acceptHandler(void *sockid) {
 	SSL_CTX *pm_ctx;
 	SSL *pm_ssl;
 	
-	pm_ctx = Initialize_SSL_Context_Server(Client_CRT, Client_Private_Key, CA_CRT);
+	pm_ctx = Initialize_SSL_Context(Client_CRT, Client_Private_Key, CA_CRT);
 
 	printf("Ready for PM connection\n");
 
@@ -459,28 +460,28 @@ void *pm_acceptHandler(void *sockid) {
 
 		bzero( &client_addr, client_len );
 		newsockfd = accept(s, (struct sockaddr *)&client_addr,&client_len);
-		//printf("New Connection %d from %d\n", newsockfd, client_addr.sin_addr.s_addr);
+		printf("New Connection %d from %d\n", newsockfd, client_addr.sin_addr.s_addr);
 		fflush(stdout);
 		
 		pm_ssl=SSL_new(pm_ctx);
-		pm_sbio=BIO_new_socket(sock,BIO_NOCLOSE);
+		pm_sbio=BIO_new_socket(newsockfd, BIO_NOCLOSE);
 		SSL_set_bio(pm_ssl,pm_sbio,pm_sbio);
-		if(SSL_connect(pm_ssl)<=0)	{
+		if(SSL_accept(pm_ssl)<=0)	{
 			printf("\nSSL Handshake Error\n");
 			ERR_print_errors_fp(stdout);
 			fflush(stdout);
 			BIO_free_all(pm_sbio);
 			SSL_shutdown(pm_ssl);
 			//SSL_free(pm_ssl);
-			close(sock);
+			close(newsockfd);
 			exit(1);
 		}
 		//Verify_Peer(pm_ssl, "server");
 		
-		pObject->pSock = newsockfd;
-		pObject->pSsl = pm_ssl;
+		pObject.pSock = newsockfd;
+		pObject.pSsl = pm_ssl;
 		
-		retval = pthread_create(&th, 0, pm_recvHandler, (void *)pObject);
+		retval = pthread_create(&th, 0, pm_recvHandler, (void *)&pObject);
 		if (retval != 0) {
 			fprintf(stdout, "pm_acceptHandler thread create failed\n");
 		}
@@ -491,7 +492,7 @@ void *pm_acceptHandler(void *sockid) {
 void *pm_recvHandler(void *pObj) {
 	
 	pInfo *pObjectL = (pInfo*)pObj;
-	int s = pObjectL->pSock;
+	//int s = pObjectL->pSock;
 	SSL *pm_ssl = pObjectL->pSsl;
 	
 	char recvBuf[MAXBUFSIZE];
@@ -648,7 +649,7 @@ SSL_CTX *Initialize_SSL_Context(char *Certificate, char *Private_Key, char *CA_C
 	OpenSSL_add_all_algorithms();
 	
 	printf("Attempting to create SSL context... ");
-	ctx = SSL_CTX_new(SSLv23_client_method());
+	ctx = SSL_CTX_new(SSLv23_method());
 	if(ctx == NULL)
 	{
 		printf("Failed. Aborting.\n");
@@ -727,62 +728,6 @@ int Verify_Peer(SSL *ssl, char *name) {
 	fflush(stdout);
 	return (1);
 }
-
-SSL_CTX *Initialize_SSL_Context_Server(char *Certificate, char *Private_Key, char *CA_Certificate) {
-	SSL_CTX *ctx;
-	
-	/* Global system initialization*/
-	SSL_library_init();
-	SSL_load_error_strings();
-	ERR_load_BIO_strings();
-	ERR_load_SSL_strings();
-	OpenSSL_add_all_algorithms();
-	
-	printf("Attempting to create SSL context... ");
-	ctx = SSL_CTX_new(SSLv23_server_method());
-	if(ctx == NULL)
-	{
-		printf("Failed. Aborting.\n");
-		return 0;
-	}
-	
-	printf("\nLoading certificates...");
-	
-	if(!SSL_CTX_use_certificate_file(ctx, Certificate, SSL_FILETYPE_PEM))
-	{
-		printf("\nUnable to load Certificate...");
-		ERR_print_errors_fp(stdout);
-		SSL_CTX_free(ctx);
-		return 0;
-	}
-	if(!SSL_CTX_use_PrivateKey_file(ctx, Private_Key, SSL_FILETYPE_PEM))
-	{
-		printf("Unable to load Private_Key File.\n");
-		ERR_print_errors_fp(stdout);
-		SSL_CTX_free(ctx);
-		return 0;
-	}
-	
-	printf("\nLoading Key File...");
-	if(!SSL_CTX_load_verify_locations(ctx, CA_Certificate, NULL))
-	{
-		printf("Unable to load CA Certificate\n");
-		ERR_print_errors_fp(stdout);
-		SSL_CTX_free(ctx);
-		return 0;
-	}
-	
-#if (OPENSSL_VERSION_NUMBER < 0x00905100L)
-	SSL_CTX_set_verify_depth(ctx,1);
-#endif
-	
-	SSL_CTX_set_verify(ctx,SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,0);
-	printf("\nSSL Initialization completed.\n");
-	
-	return ctx;
-}
-
-
 
 
 

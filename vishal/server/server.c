@@ -29,7 +29,7 @@ void connLost(int, char*);
 void initAll(void);
 void logMsg(char*);
 int delFromHist(int id, char *user);
-int addToHist(int id, char *ip, int port, char* user);
+int addToHist(int id, char *ip, int port, char* user, SSL *ssl, BIO *sbio);
 
 SSL_CTX *Initialize_SSL_Context(char *Certificate, char *Private_Key, char *CA_Certificate);
 int Verify_Peer(SSL *ssl, char *name);
@@ -74,21 +74,23 @@ struct timeval timeout_tv;
 
 int main(int argc,char *argv[]) {
 
-    pthread_t th;
-    int retval;
+	pthread_t th;
+	int retval;
 	
-    int newsockfd = 0;
+	int newsockfd = 0;
 	int sock = 0;
 	int true = 1;
 	struct sockaddr_in server_addr;
 	struct sockaddr_in client_addr;
 	socklen_t client_len = sizeof(client_addr);
 	
-    //check arguments here
-    if (argc < 7)  { // 	0      1 		2 				3 						4 						  5  
+	SSL_CTX *ctx;
+	
+	//check arguments here
+	if (argc < 6)  { // 	0      1 		2 				3 						4 						  5  
 		printf("USAGE: ./server <port#> <logFile> <CA Certificate Path> <server_certificate_path> <server_private_key_path>\n");
 		return 0;
-    }
+	}
 	
 	
 	fileName = (char*) malloc ((sizeof(char)) * ((strlen(argv[2])) + 1));
@@ -140,7 +142,7 @@ int main(int argc,char *argv[]) {
 	//====================Listen for conncetions=============================================================
 	
     for (;;) {
-		BIO newBio;
+		BIO *newBio;
 		SSL *newSsl;
 		
 		bzero( &client_addr, client_len );
@@ -166,10 +168,10 @@ int main(int argc,char *argv[]) {
 		}
 		else {
 			retval = addToHist(newsockfd, clientIp, 0, "default", newSsl, newBio);
-			pObject->pSock = newsockfd;
-			pObject->pSsl = newSsl;
+			pObject.pSock = newsockfd;
+			pObject.pSsl = newSsl;
 			
-			retval = pthread_create(&th, 0, connection, (void *)pObject);
+			retval = pthread_create(&th, 0, connection, (void *)&pObject);
 			if (retval != 0) { 
 				fprintf(stdout, "thread create failed\n"); 
 			}
@@ -479,7 +481,7 @@ int sockToIdxHist(int sock) {
 	return retval;
 }
 
-int addToHist(int id, char *ip, int port, char* user, SSL *ssl, BIO sbio) {
+int addToHist(int id, char *ip, int port, char* user, SSL *ssl, BIO *sbio) {
 	int added = -1;
 	int tries = 200;
 	
