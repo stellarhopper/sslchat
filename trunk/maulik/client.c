@@ -25,6 +25,7 @@ char* client_id = NULL;
 char statusMsg[MAX_STATUS_SIZE] = {0};
 char recvBuf[MAXBUFSIZE] = {0};
 char first_msg[MAXBUFSIZE] = {0};
+char temp_buf[500] = {0};
 
 
 void *listen_message_private(void *);
@@ -38,7 +39,7 @@ void delete_entry(int sock_to_delete);
 
 SSL_CTX *Initialize_SSL_Context(char *Certificate, char *Private_Key, char *CA_Certificate);
 int Verify_Peer(SSL *ssl, char *name);
-SSL_CTX *Initialize_SSL_Context_Server(char *Certificate, char *Private_Key, char *CA_Certificate);
+//SSL_CTX *Initialize_SSL_Context_Server(char *Certificate, char *Private_Key, char *CA_Certificate);
 
 pthread_t th_listen_message_private;
 pthread_t myth;
@@ -164,6 +165,7 @@ int main(int argc, char *argv[])
 		{
 			perror("Connection Request Sent");
 			printf("Trying again in 5 seconds...\n\n");
+			//print_time("Trying again in 5 seconds...\n\n");
 			fflush(stdout);
 			sleep(5);
 		}		
@@ -177,6 +179,8 @@ int main(int argc, char *argv[])
 	if(SSL_connect(ssl)<=0)
 	{
 		printf("\nSSL Handshake Error\n");
+		//print_time("\nSSL Handshake Error\n");
+
 		ERR_print_errors_fp(stdout);
 		fflush(stdout);
 		BIO_free_all(sbio);
@@ -186,7 +190,21 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 	
-	Verify_Peer(ssl, "server");
+	if(Verify_Peer(ssl, "server") ==1)
+	{
+		printf("Server verified\n");
+		//print_time("Server Verified");
+	}
+	else
+	{
+		printf("Server NOT verified\n");
+		//print_time("Server NOT Verified");
+
+		SSL_free(ssl);
+		shutdown(sock,2);
+		exit(0);	
+	}
+
 	
 	printf("\nLOG: Connection established with server\n");
 	
@@ -251,6 +269,8 @@ int main(int argc, char *argv[])
 			printf ("\nLOG: Exiting");
 			fflush(stdout);
 			kill_flag = 1;
+			SSL_free(ssl);
+
 			break;
 		}
 		else if(strncmp(cmd, "/display", 8) == 0)		//for display command
@@ -402,6 +422,10 @@ void *listen_messages(void *passed_struct)		//this is the thread that receives t
 		if(rc == 0)
 		{
 			printf("\nERROR: Connection Lost");
+			//print_time("\nERROR: Connection Lost");
+			//SSL_shutdown(ssl);
+			SSL_free(ssl_listen_server);
+
 			exit(1);
 			pthread_exit(NULL);
 		}
@@ -417,8 +441,9 @@ void *listen_messages(void *passed_struct)		//this is the thread that receives t
 				//parse ip address & port number in the feilds at_ip & at_port
 				char at_ip[20];
 				char at_port[7];
-				
-				int x,y,myindex;
+				char clientname_to_verify[30];
+			
+				int x,y,z,myindex;
 				myindex=0;
 			
 				BIO *private_connect_sbio;
@@ -440,8 +465,20 @@ void *listen_messages(void *passed_struct)		//this is the thread that receives t
 				{
 			
 						exit_at_loop =0;
-						at_ip[myindex]=recvBuf[x];
+						clientname_to_verify[myindex]=recvBuf[x];
 						myindex++;
+				}
+							
+				clientname_to_verify[myindex]='\0';
+				x++;
+				myindex=0;
+				
+				for(z=x ; recvBuf[x] != ':'; z++)
+				{
+						exit_at_loop =0;
+						at_ip[myindex]=recvBuf[z];
+						myindex++;
+						x++;
 				}
 							
 				at_ip[myindex]='\0';
@@ -500,8 +537,24 @@ void *listen_messages(void *passed_struct)		//this is the thread that receives t
 					exit(1);
 				}
 	
-				Verify_Peer(ssl, "server");		//<<<<<LOOK>>>>>
+				if(Verify_Peer(private_connect_ssl, clientname_to_verify) == 1)	//<<<<<LOOK>>>>>
+				{
+					printf("Peer client %s verified\n",clientname_to_verify);
+					//sprintf(temp_buf,"Peer client %s verified\n",clientname_to_verify);
+					//print_time(temp_buf);
+					//bzero(temp_buf,500);
 
+				}
+				else
+				{
+					printf("Peer client NOT %s verified\n",clientname_to_verify);
+					//sprintf(temp_buf,"Peer client NOT %s verified\n",clientname_to_verify);
+					//print_time(temp_buf);
+					//bzero(temp_buf,500);
+					
+					SSL_free(private_connect_ssl);
+					exit(0);
+				}
 	
 				int q;
 				for (q=0; q<MAX_CONNECTS; q++) 
@@ -557,7 +610,8 @@ void *listen_accept_private(void *t)
 	SSL *ssl_priv_listen;
 	SSL_CTX *listen_priv_ctx;
 	
-	listen_priv_ctx = Initialize_SSL_Context_Server(Client_CRT, Client_Private_Key, CA_CRT);		//Acts as a server
+	//listen_priv_ctx = Initialize_SSL_Context_Server(Client_CRT, Client_Private_Key, CA_CRT);		//Acts as a server
+	listen_priv_ctx = Initialize_SSL_Context(Client_CRT, Client_Private_Key, CA_CRT);		//Acts as a server
 
 	
 	if ((sock_p = socket(AF_INET, SOCK_STREAM, 0)) == -1) 
@@ -654,14 +708,65 @@ void *listen_message_private(void *my_temp_struct)
 	SSL *ssl_listen_priv = a_struct->temp_ssl;
 	int sock_listen_priv = a_struct->temp_sock;
 	
-	int rec_size;
+	int rec_size,g,myindex =0;
 	char recv_buf_priv[MAXBUFSIZE]={0};
 	
+	char peer_client_id[50];
 	pthread_detach(pthread_self()); 
 	
 	printf("\nLOG: Listening for message");
 	bzero(recv_buf_priv,MAXBUFSIZE); 
 	
+	
+	
+	bzero(recv_buf_priv,MAXBUFSIZE);
+	//rec_size = recv(sock_listen_priv, recv_buf_priv, MAXBUFSIZE, 0);
+	rec_size = SSL_read(ssl_listen_priv, recv_buf_priv, MAXBUFSIZE);
+	
+	for(g=1 ; recv_buf_priv[g] != ':'; g++)
+	{
+			peer_client_id[myindex]=recv_buf_priv[g];
+			myindex++;
+	}
+				
+	peer_client_id[myindex]='\0';
+
+	if(rec_size == 0)
+	{
+		printf("\nERROR: Connection Lost");
+		//delete_entry(sock_listen_priv);
+		SSL_free(ssl_listen_priv);
+		shutdown(sock_listen_priv,2);
+		pthread_exit(NULL);
+	}
+
+	printf("\n%s",recv_buf_priv);
+	fflush(stdout);
+	printf ("\n%s : ",client_id);
+	fflush(stdout);
+	
+	//printf("Verifying peer client id: %s\n",peer_client_id);
+	
+	if(Verify_Peer(ssl_listen_priv,peer_client_id) ==1)
+	{
+		printf("Peer client id %s verified\n",peer_client_id);
+		//sprintf(temp_buf,"Peer client id %s verified\n",peer_client_id);
+		//print_time(temp_buf);
+		//bzero(temp_buf,500);
+	}
+	else
+	{
+		printf("Peer client id %s NOT verified\n",peer_client_id);
+		//sprintf(temp_buf,"Peer client id %s NOT verified\n",peer_client_id);
+		//print_time(temp_buf);
+		//bzero(temp_buf,500);
+
+		SSL_free(ssl_listen_priv);
+		shutdown(sock_listen_priv,2);
+		pthread_exit(NULL);
+	}
+
+		
 	while(1)
 	{
 		bzero(recv_buf_priv,MAXBUFSIZE);
@@ -672,6 +777,7 @@ void *listen_message_private(void *my_temp_struct)
 		{
 			printf("\nERROR: Connection Lost");
 			//delete_entry(sock_listen_priv);
+			SSL_free(ssl_listen_priv);
 			shutdown(sock_listen_priv,2);
 			pthread_exit(NULL);
 		}
@@ -771,6 +877,7 @@ SSL_CTX *Initialize_SSL_Context(char *Certificate, char *Private_Key, char *CA_C
 {
 	SSL_CTX *ctx;
 	printf("Entered Initialize_SSL_Context\n");
+	//print_time("Entered Initialize_SSL_Context\n");
 	/* Global system initialization*/
 	SSL_library_init();
 	SSL_load_error_strings();
@@ -778,38 +885,53 @@ SSL_CTX *Initialize_SSL_Context(char *Certificate, char *Private_Key, char *CA_C
 	ERR_load_SSL_strings();
 	OpenSSL_add_all_algorithms();
 	
-	printf("Attempting to create SSL context... ");
-	ctx = SSL_CTX_new(SSLv23_client_method());
+	printf("Attempting to create SSL client context... ");
+	//print_time("Attempting to create SSL client context... ");
+
+	ctx = SSL_CTX_new(SSLv23_method());
 	if(ctx == NULL)
 	{
 		printf("Failed. Aborting.\n");
-		return 0;
+		//print_time("Failed. Aborting.\n");
+		exit(0);
 	}
 	
 	printf("\nLoading certificates...");
+	//print_time("\nLoading certificates...");
 	
 	if(!SSL_CTX_use_certificate_file(ctx, Certificate, SSL_FILETYPE_PEM))
 	{
 		printf("\nUnable to load Certificate...");
+		//print_time("\nUnable to load Certificate...");
 		ERR_print_errors_fp(stdout);
 		SSL_CTX_free(ctx);
-		return 0;
+		//return 0;
+		exit(0);
+
 	}
 	if(!SSL_CTX_use_PrivateKey_file(ctx, Private_Key, SSL_FILETYPE_PEM))
 	{
 		printf("Unable to load Private_Key File.\n");
+		//print_time("Unable to load Private_Key File.\n");
 		ERR_print_errors_fp(stdout);
 		SSL_CTX_free(ctx);
-		return 0;
+		//return 0;
+		exit(0);
 	}
 	
 	printf("\nLoading Key File...");
+	//print_time("\nLoading Key File...");
+
 	if(!SSL_CTX_load_verify_locations(ctx, CA_Certificate, NULL))
 	{
 		printf("Unable to load CA Certificate\n");
+		//print_time("Unable to load CA Certificate\n");
+
 		ERR_print_errors_fp(stdout);
 		SSL_CTX_free(ctx);
-		return 0;
+		//return 0;
+		exit(0);
+
 	}
 	
 #if (OPENSSL_VERSION_NUMBER < 0x00905100L)
@@ -818,6 +940,7 @@ SSL_CTX *Initialize_SSL_Context(char *Certificate, char *Private_Key, char *CA_C
 	
 	SSL_CTX_set_verify(ctx,SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,0);
 	printf("\nSSL Initialization completed.\n");
+	//print_time("\nSSL Initialization completed.\n");
 	
 	return ctx;
 }
@@ -835,7 +958,12 @@ int Verify_Peer(SSL *ssl, char *name)
     if(result!=X509_V_OK)
 	{
 		printf("\nUnable to verify %s Certificate. Verification Result: %d\n",name,result);
+		//sprintf(temp_buf,"\nUnable to verify %s Certificate. Verification Result: %d\n",name,result);
+		//print_time(temp_buf);
+		//bzero(temp_buf,500);
+		
 		ERR_print_errors_fp(stdout);
+		exit(0);
 		return(-1);
 	}
 	
@@ -854,65 +982,15 @@ int Verify_Peer(SSL *ssl, char *name)
     if(strcasecmp(peer_CN,name))
 	{
 		printf("\nUnable to verify client's name:%s  with Certificate Signature: %s. Verification Result: %d\n",name,peer_CN,result);
+		//sprintf(temp_buf,"\nUnable to verify client's name:%s  with Certificate Signature: %s. Verification Result: %d\n",name,peer_CN,result);
+		//print_time(temp_buf);
+		//bzero(temp_buf,500);
+		
 		ERR_print_errors_fp(stdout);
+		exit(0);
 		return(-1);
 	} 
 	fflush(stdout);
 	return (1);
 }
 
-SSL_CTX *Initialize_SSL_Context_Server(char *Certificate, char *Private_Key, char *CA_Certificate)
-{
-	SSL_CTX *ctx;
-		printf("Entered Initialize_SSL_Context_server\n");
-
-	/* Global system initialization*/
-	SSL_library_init();
-	SSL_load_error_strings();
-	ERR_load_BIO_strings();
-	ERR_load_SSL_strings();
-	OpenSSL_add_all_algorithms();
-	
-	printf("Attempting to create SSL context... ");
-	ctx = SSL_CTX_new(SSLv23_server_method());
-	if(ctx == NULL)
-	{
-		printf("Failed. Aborting.\n");
-		return 0;
-	}
-	
-	printf("\nLoading certificates...");
-	
-	if(!SSL_CTX_use_certificate_file(ctx, Certificate, SSL_FILETYPE_PEM))
-	{
-		printf("\nUnable to load Certificate...");
-		ERR_print_errors_fp(stdout);
-		SSL_CTX_free(ctx);
-		return 0;
-	}
-	if(!SSL_CTX_use_PrivateKey_file(ctx, Private_Key, SSL_FILETYPE_PEM))
-	{
-		printf("Unable to load Private_Key File.\n");
-		ERR_print_errors_fp(stdout);
-		SSL_CTX_free(ctx);
-		return 0;
-	}
-	
-	printf("\nLoading Key File...");
-	if(!SSL_CTX_load_verify_locations(ctx, CA_Certificate, NULL))
-	{
-		printf("Unable to load CA Certificate\n");
-		ERR_print_errors_fp(stdout);
-		SSL_CTX_free(ctx);
-		return 0;
-	}
-	
-#if (OPENSSL_VERSION_NUMBER < 0x00905100L)
-	SSL_CTX_set_verify_depth(ctx,1);
-#endif
-	
-	SSL_CTX_set_verify(ctx,SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,0);
-	printf("\nSSL Initialization completed.\n");
-	
-	return ctx;
-}
