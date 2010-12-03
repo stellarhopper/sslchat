@@ -70,7 +70,6 @@ typedef struct New_User_List {
 void *connection(void *U_List);
 SSL_CTX *Initialize_SSL_Context(char *Certificate, char *Private_Key, char *CA_Certificate);
 int Verify_Peer(SSL *ssl, char *name);
-SSL_CTX *Initialize_SSL_Context_Server(char *Certificate, char *Private_Key, char *CA_Certificate);
 //void File_Stat(File_Data *file_data);
 
 
@@ -158,7 +157,7 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 	
-    Verify_Peer(ssl, "server");
+    if(Verify_Peer(ssl, "server") != 1)		exit(1);
 	
 	
 	
@@ -203,14 +202,17 @@ int main(int argc, char *argv[])
 					printf("Port No. to Listen: %s\n",&recv_data[4]);
 					Initialize_Listen_Mode(Listen_Socket,atoi(&recv_data[4]));
 				}
-				else
-					exit(1);
 			}
-			else
-				exit(1);
 		}
 		else
+		{
+			printf("Connection Broken before entering the chat room.\n");
+			BIO_free_all(sbio);
+			//SSL_shutdown(Tmp_User.ssl);
+			SSL_free(ssl);
+			close(sock);
 			exit(1);
+		}
 	}
 	
 	Init_Socket_SIGIO(sock, getpid());	
@@ -294,7 +296,7 @@ int main(int argc, char *argv[])
 					if (connect(sock2, (struct sockaddr *)&client_addr,
 								sizeof(struct sockaddr)) == -1) 
 					{
-						perror("Client Connection Error\n");
+						perror("\nClient Connection Error\n");
 						break;
 					}
 					
@@ -314,9 +316,9 @@ int main(int argc, char *argv[])
 						break;
 					}
 					
-					if(Verify_Peer(ssl, "server") != 1)
+					if(Verify_Peer(ssl2, u_id+1) != 1)
 					{
-						printf("Requested Client can not be verified\n");
+						printf("\nRequested Client can not be verified\n");
 						fflush(stdout);
 						BIO_free_all(sbio2);
 						SSL_shutdown(ssl2);
@@ -544,7 +546,7 @@ void *Listen_Handler(void *sockcl)
 	
 	SSL_CTX *listen_ctx;
 	
-	listen_ctx = Initialize_SSL_Context_Server(Client_CRT, Client_Private_Key, CA_CRT);
+	listen_ctx = Initialize_SSL_Context(Client_CRT, Client_Private_Key, CA_CRT);
 	
 	while(1)
 	{
@@ -591,7 +593,7 @@ void *Listen_Handler(void *sockcl)
 			if(bytes_recieved)
 			{
 				memcpy(&Tmp_User.User_Name[0],recv_data,bytes_recieved);
-				if(SSL_get_verify_result(Tmp_User.ssl) == X509_V_OK && SSL_get_peer_certificate(Tmp_User.ssl) != NULL)
+				if(Verify_Peer(Tmp_User.ssl, Tmp_User.User_Name) == 1)
 				{
 					
 					sprintf(send_data,"MSG");			
@@ -618,7 +620,7 @@ void *Listen_Handler(void *sockcl)
 					}
 				}
 				else{
-					printf("Private Client Connection: Client name can not be verified with its Certificate.\n");
+					printf("\nPrivate Client Connection: Client name can not be verified with its Certificate.\n");
 					BIO_free_all(Tmp_User.sbio);
 					SSL_shutdown(Tmp_User.ssl);
 					//(Tmp_User.ssl);
@@ -751,25 +753,6 @@ int Check_For_User(char *U_ID)
 
 
 
-/* void File_Stat(File_Data *file_data)
- {
- file_data->file_ptr = fopen(file_data->file_path,"r");
- if(file_data->file_ptr == NULL || file_data->file_ptr<=0)
- {
- printf("File not Found\n");
- exit(1);
- }
- else
- {
- file_data->file_size = fread(file_data->file_buffer, 1,MAX_FILE_SIZE, file_data->file_ptr);
- if(! file_data->file_size)
- exit(1);
- 
- fclose(file_data->file_ptr);
- }
- } */
-
-
 SSL_CTX *Initialize_SSL_Context(char *Certificate, char *Private_Key, char *CA_Certificate)
 {
 	SSL_CTX *ctx;
@@ -782,7 +765,7 @@ SSL_CTX *Initialize_SSL_Context(char *Certificate, char *Private_Key, char *CA_C
 	OpenSSL_add_all_algorithms();
 	
 	printf("Attempting to create SSL context... ");
-	ctx = SSL_CTX_new(SSLv23_client_method());
+	ctx = SSL_CTX_new(SSLv23_method());
 	if(ctx == NULL)
 	{
 		printf("Failed. Aborting.\n");
@@ -815,9 +798,7 @@ SSL_CTX *Initialize_SSL_Context(char *Certificate, char *Private_Key, char *CA_C
 		return 0;
 	}
 	
-#if (OPENSSL_VERSION_NUMBER < 0x00905100L)
 	SSL_CTX_set_verify_depth(ctx,1);
-#endif
 	
 	SSL_CTX_set_verify(ctx,SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,0);
 	printf("\nSSL Initialization completed.\n");
@@ -837,8 +818,9 @@ int Verify_Peer(SSL *ssl, char *name)
     
     if(result!=X509_V_OK)
 	{
-		printf("\nUnable to verify %s Certificate. Verification Result: %d\n",name,result);
+		printf("\nUnable to verify %s's Certificate. Verification Result: %d\n",name,result);
 		ERR_print_errors_fp(stdout);
+		fflush(stdout);
 		return(-1);
 	}
 	
@@ -856,65 +838,32 @@ int Verify_Peer(SSL *ssl, char *name)
 	
     if(strcasecmp(peer_CN,name))
 	{
-		printf("\nUnable to verify client's name:%s  with Certificate Signature: %s. Verification Result: %d\n",name,peer_CN,result);
+		printf("\nUnable to verify name:%s  with its Certificate Signature: %s.\n",name,peer_CN);
 		ERR_print_errors_fp(stdout);
+		fflush(stdout);
 		return(-1);
 	} 
-	fflush(stdout);
+	
 	return (1);
 }
 
-SSL_CTX *Initialize_SSL_Context_Server(char *Certificate, char *Private_Key, char *CA_Certificate)
-{
-	SSL_CTX *ctx;
-	
-	/* Global system initialization*/
-	SSL_library_init();
-	SSL_load_error_strings();
-	ERR_load_BIO_strings();
-	ERR_load_SSL_strings();
-	OpenSSL_add_all_algorithms();
-	
-	printf("Attempting to create SSL context... ");
-	ctx = SSL_CTX_new(SSLv23_server_method());
-	if(ctx == NULL)
-	{
-		printf("Failed. Aborting.\n");
-		return 0;
-	}
-	
-	printf("\nLoading certificates...");
-	
-	if(!SSL_CTX_use_certificate_file(ctx, Certificate, SSL_FILETYPE_PEM))
-	{
-		printf("\nUnable to load Certificate...");
-		ERR_print_errors_fp(stdout);
-		SSL_CTX_free(ctx);
-		return 0;
-	}
-	if(!SSL_CTX_use_PrivateKey_file(ctx, Private_Key, SSL_FILETYPE_PEM))
-	{
-		printf("Unable to load Private_Key File.\n");
-		ERR_print_errors_fp(stdout);
-		SSL_CTX_free(ctx);
-		return 0;
-	}
-	
-	printf("\nLoading Key File...");
-	if(!SSL_CTX_load_verify_locations(ctx, CA_Certificate, NULL))
-	{
-		printf("Unable to load CA Certificate\n");
-		ERR_print_errors_fp(stdout);
-		SSL_CTX_free(ctx);
-		return 0;
-	}
-	
-#if (OPENSSL_VERSION_NUMBER < 0x00905100L)
-	SSL_CTX_set_verify_depth(ctx,1);
-#endif
-	
-	SSL_CTX_set_verify(ctx,SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,0);
-	printf("\nSSL Initialization completed.\n");
-	
-	return ctx;
-}
+
+
+
+/* void File_Stat(File_Data *file_data)
+ {
+ file_data->file_ptr = fopen(file_data->file_path,"r");
+ if(file_data->file_ptr == NULL || file_data->file_ptr<=0)
+ {
+ printf("File not Found\n");
+ exit(1);
+ }
+ else
+ {
+ file_data->file_size = fread(file_data->file_buffer, 1,MAX_FILE_SIZE, file_data->file_ptr);
+ if(! file_data->file_size)
+ exit(1);
+ 
+ fclose(file_data->file_ptr);
+ }
+ } */
