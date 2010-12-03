@@ -91,7 +91,6 @@ int main(int argc,char *argv[])
 	int i = 0;
 	char send_data [1024] , recv_data[1024]; 
 	struct sockaddr_in server_addr;
-	New_User_List Tmp_User;
 	int sin_size = sizeof(struct sockaddr_in);
 	int exit_flag = 0;
 	
@@ -196,6 +195,7 @@ int main(int argc,char *argv[])
 	
     for ( ; ; ) //endless loop
     {
+		New_User_List Tmp_User;
 		exit_flag = 0;
 		bzero(&Tmp_User,sizeof(New_User_List));
 		
@@ -260,8 +260,8 @@ int main(int argc,char *argv[])
 					else {
 						printf("Connection Broken before adding new client.\n");
 						BIO_free_all(Tmp_User.sbio);
-						SSL_shutdown(Tmp_User.ssl);
-						//SSL_free(Tmp_User.ssl);
+						//SSL_shutdown(Tmp_User.ssl);
+						SSL_free(Tmp_User.ssl);
 						close(newsockfd);
 						exit_flag = 1;
 					}
@@ -269,8 +269,8 @@ int main(int argc,char *argv[])
 				else{
 					//printf("Connection Broken before adding new client.\n");
 					BIO_free_all(Tmp_User.sbio);
-					SSL_shutdown(Tmp_User.ssl);
-					//SSL_free(Tmp_User.ssl);
+					//SSL_shutdown(Tmp_User.ssl);
+					SSL_free(Tmp_User.ssl);
 					close(newsockfd);
 					exit_flag = 1;
 				}
@@ -420,8 +420,8 @@ void *connection(void *U_List)
 					fflush(stdout);
 					
 					BIO_free_all(sbio);
-					SSL_shutdown(ssl);
-					//SSL_free(ssl);
+					//SSL_shutdown(ssl);
+					SSL_free(ssl);
 					close(s);
 					
 					pthread_exit(NULL);
@@ -576,8 +576,8 @@ void *connection(void *U_List)
 			pthread_mutex_unlock(&mutex);
 			
 			BIO_free_all(sbio);
-			SSL_shutdown(ssl);
-			//SSL_free(ssl);
+			//SSL_shutdown(ssl);
+			SSL_free(ssl);
 			close(s);
 			
 			pthread_exit(NULL);
@@ -612,8 +612,8 @@ void *connection(void *U_List)
 			pthread_mutex_unlock(&mutex);
 			
 			BIO_free_all(sbio);
-			SSL_shutdown(ssl);
-			//SSL_free(ssl);
+			//SSL_shutdown(ssl);
+			SSL_free(ssl);
 			close(s);
 			
 			pthread_exit(NULL);
@@ -667,9 +667,7 @@ SSL_CTX *Initialize_SSL_Context(char *Certificate, char *Private_Key, char *CA_C
 		return 0;
 	}
 	
-#if (OPENSSL_VERSION_NUMBER < 0x00905100L)
 	SSL_CTX_set_verify_depth(ctx,1);
-#endif
 	
 	SSL_CTX_set_verify(ctx,SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,0);
 	printf("\nSSL Initialization completed.\n");
@@ -706,7 +704,7 @@ int Verify_Peer(SSL *ssl, char *name)
     
     if(result!=X509_V_OK)
 	{
-		printf("\nUnable to verify %s Certificate. Verification Result: %d\n",name,result);
+		printf("\nUnable to verify %s's Certificate. Verification Result: %d\n",name,result);
 		ERR_print_errors_fp(stdout);
 		return(-1);
 	}
@@ -725,7 +723,7 @@ int Verify_Peer(SSL *ssl, char *name)
 	
     if(strcasecmp(peer_CN,name))
 	{
-		printf("\nUnable to verify client's name:%s name with Certificate Signature: %s. Verification Result: %d\n",name,peer_CN,result);
+		printf("\nUnable to verify client's name:%s name with Certificate Signature: %s.\n",name,peer_CN);
 		ERR_print_errors_fp(stdout);
 		return(-1);
 	} 
