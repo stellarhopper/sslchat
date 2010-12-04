@@ -552,7 +552,6 @@ void *pm_recvHandler(void *pObj) {
 			if (Verify_Peer(pm_ssl, uid) < 0) {
 				//invalid certificate, disconnect
 				printf("Exiting because of invalid certificate: %s\n", uid);
-				BIO_free_all(pm_sbio);
 				SSL_shutdown(pm_ssl);
 				//SSL_free(pm_ssl);
 				pthread_exit(NULL);
