@@ -157,7 +157,7 @@ int main(int argc,char *argv[]) {
 		 exit(1);
 		}
 		
-		newBio = BIO_new_socket(newsockfd,BIO_NOCLOSE);
+		newBio = BIO_new_socket(newsockfd, BIO_NOCLOSE);
 		newSsl = SSL_new(ctx);
 		SSL_set_bio(newSsl, newBio, newBio);
 		
@@ -176,7 +176,7 @@ int main(int argc,char *argv[]) {
 				fprintf(stdout, "thread create failed\n"); 
 			}
 		}
-    }
+	}
 	printf("should probably never get here - for loop\n");
 	return 0;
 }
@@ -279,7 +279,14 @@ void *connection(void *pObj) {
 	sprintf(logBuf, "<Join> <%s>", userId);
 	logMsg(logBuf);
 	
-    while (1) {
+	if (Verify_Peer(ssl, userId) < 0) {
+		//invalid certificate, kick
+		connLost(myClientIdx, userId);
+		printf("Exiting thread because of invalid certificate msg\n");
+		pthread_exit(NULL);
+	}
+	
+	while (1) {
 		bzero(recvBuf, MAXBUFSIZE);
 		//sz_recv = recv(s, recvBuf, MAXBUFSIZE, 0);
 		sz_recv = SSL_read(ssl, recvBuf, MAXBUFSIZE);
@@ -571,7 +578,7 @@ SSL_CTX *Initialize_SSL_Context(char *Certificate, char *Private_Key, char *CA_C
 	if(ctx == NULL)
 	{
 		printf("Failed. Aborting.\n");
-		return 0;
+		exit(0);
 	}
 	
 	printf("\nLoading certificates...");
@@ -581,14 +588,14 @@ SSL_CTX *Initialize_SSL_Context(char *Certificate, char *Private_Key, char *CA_C
 		printf("\nUnable to load Certificate...");
 		ERR_print_errors_fp(stdout);
 		SSL_CTX_free(ctx);
-		return 0;
+		exit(0);
 	}
 	if(!SSL_CTX_use_PrivateKey_file(ctx, Private_Key, SSL_FILETYPE_PEM))
 	{
 		printf("Unable to load Private_Key File.\n");
 		ERR_print_errors_fp(stdout);
 		SSL_CTX_free(ctx);
-		return 0;
+		exit(0);
 	}
 	
 	printf("\nLoading Key File...");
@@ -597,7 +604,7 @@ SSL_CTX *Initialize_SSL_Context(char *Certificate, char *Private_Key, char *CA_C
 		printf("Unable to load CA Certificate\n");
 		ERR_print_errors_fp(stdout);
 		SSL_CTX_free(ctx);
-		return 0;
+		exit(0);
 	}
 	
 	SSL_CTX_set_verify_depth(ctx,1);

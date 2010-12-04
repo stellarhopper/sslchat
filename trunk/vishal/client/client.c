@@ -135,7 +135,7 @@ int main(int argc, char *argv[]) {
 	}
 
 	pm_server_addr.sin_family = AF_INET;
-	pm_server_addr.sin_port = htons(atoi(argv[5]));
+	pm_server_addr.sin_port = htons(atoi(argv[4]));
 	pm_server_addr.sin_addr.s_addr = INADDR_ANY;
 	bzero(&(pm_server_addr.sin_zero),8);
 
@@ -149,6 +149,7 @@ int main(int argc, char *argv[]) {
 		exit(1);
 	}
 
+	printf("Passing listening sock %d\n",pm_listenSock);
 	retval = pthread_create(&th, 0, pm_acceptHandler, (void *)pm_listenSock);
 	if (retval != 0) {
 		fprintf(stdout, "pm_acceptHandler thread create failed\n");
@@ -182,7 +183,10 @@ int main(int argc, char *argv[]) {
 				close(sock);
 				exit(1);
 			}
-			Verify_Peer(ssl, "server");
+			if (Verify_Peer(ssl, "server") < 0) {
+				//invalid certificate, disconnect
+				printf("Exiting because of invalid certificate from server\n");
+			}
 		}
 	}while (retval == -1);
 
@@ -392,8 +396,14 @@ void *recvHandler(void *pObj) {
 					close(pm_connectSock);
 					exit(1);
 				}
-				//Verify_Peer(pm_ssl, "server");
-//*****				//TODO: verify with parsed name
+				if (Verify_Peer(pm_ssl, locUsr) < 0) {
+					//invalid certificate, disconnect
+					printf("Exiting because of invalid certificate wjile connecting to peer\n");
+					BIO_free_all(pm_sbio);
+					SSL_shutdown(pm_ssl);
+					//SSL_free(pm_ssl);
+					close(pm_connectSock);
+				}
 					
 				//send the data
 				//send(pm_connectSock, pm_sendBuf, strlen(pm_sendBuf), 0);
@@ -442,7 +452,7 @@ void *recvHandler(void *pObj) {
 
 void *pm_acceptHandler(void *sockid) {
 	int s = (int)sockid;
-	int newsockfd;
+	int newsockfd=0;
 	struct sockaddr_in client_addr;
 	socklen_t client_len = sizeof(client_addr);
 	int retval = 0;
@@ -459,6 +469,8 @@ void *pm_acceptHandler(void *sockid) {
 	while(!killFlag) {
 
 		bzero( &client_addr, client_len );
+		printf("NA: New Connection %d from %d\n", s, client_addr.sin_addr.s_addr);
+
 		newsockfd = accept(s, (struct sockaddr *)&client_addr,&client_len);
 		printf("New Connection %d from %d\n", newsockfd, client_addr.sin_addr.s_addr);
 		fflush(stdout);
@@ -483,7 +495,7 @@ void *pm_acceptHandler(void *sockid) {
 		
 		retval = pthread_create(&th, 0, pm_recvHandler, (void *)&pObject);
 		if (retval != 0) {
-			fprintf(stdout, "pm_acceptHandler thread create failed\n");
+			fprintf(stdout, "pm_recvHandler thread create failed\n");
 		}
 	}
 	return 0;
@@ -497,6 +509,7 @@ void *pm_recvHandler(void *pObj) {
 	
 	char recvBuf[MAXBUFSIZE];
 	int sz_recv = 0;
+	int flag_verified = 0;
 
 	while(!killFlag) {
 		bzero(recvBuf, MAXBUFSIZE);
@@ -507,6 +520,32 @@ void *pm_recvHandler(void *pObj) {
 			//connection lost; pm_client died
 			//printf("Connection to pm_client lost.\n");
 			pthread_exit(NULL);
+		}
+		
+		if (flag_verified == 0) {
+			char *tmp = NULL;
+			int cnt = 0;
+			char *uid;
+			
+			printf("Will parse: %s\n", recvBuf);
+			tmp = strpbrk(recvBuf, " ");
+			printf("Have: %s\n", tmp);
+			do {
+				tmp--;
+				cnt ++;
+			}while(tmp != recvBuf);
+			
+			printf("stats: cnt = %d, tmp = %s\n", cnt, tmp);
+			
+			uid = (char*) malloc ((cnt+1)*sizeof(char));
+			strncpy(uid, tmp, cnt);
+			uid[cnt] = 0;
+				
+			if (Verify_Peer(pm_ssl, uid) < 0) {
+				//invalid certificate, disconnect
+				printf("Exiting because of invalid certificate: %s\n", uid);
+			}
+			flag_verified = 1;
 		}
 
 		printf("\n%s\n%s>", recvBuf, userId);
