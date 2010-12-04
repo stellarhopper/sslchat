@@ -181,11 +181,16 @@ int main(int argc, char *argv[]) {
 				SSL_shutdown(ssl);
 				//SSL_free(ssl);
 				close(sock);
-				exit(1);
 			}
 			if (Verify_Peer(ssl, "server") < 0) {
 				//invalid certificate, disconnect
 				printf("Exiting because of invalid certificate from server\n");
+				BIO_free_all(sbio);
+				SSL_shutdown(ssl);
+				//SSL_free(ssl);
+				close(sock);
+				close(pm_listenSock);
+				exit(1);
 			}
 		}
 	}while (retval == -1);
@@ -209,7 +214,7 @@ int main(int argc, char *argv[]) {
 		fgets(cmd, MAXBUFSIZE, stdin);
 		//scanf("%s", cmd);
 
-		for (i=0; i<MAXBUFSIZE; i++) {
+		for (i=0; i<MAXBUFSIZE; i++) {               //convert <CRLF> to <NULL>
 			if(cmd[i] == 0x0a) cmd[i] = 0x00;
 		}
 
@@ -275,6 +280,10 @@ int main(int argc, char *argv[]) {
 			strcpy(sendBuf, cmd);
 			//send(sock,sendBuf,strlen(sendBuf), 0);
 			SSL_write(ssl,sendBuf,strlen(sendBuf));
+			BIO_free_all(sbio);
+			SSL_shutdown(ssl);
+			//SSL_free(ssl);
+			close(sock);
 			killFlag = 1;
 			break;
 		}
@@ -359,7 +368,7 @@ void *recvHandler(void *pObj) {
 			locPort[i] = 0;
 			connectPort = atoi(locPort);
 
-			printf("@ message from server: user = %s, ip = %s, port = %d\n", locUsr, locIp, connectPort);
+			//printf("@ message from server: user = %s, ip = %s, port = %d\n", locUsr, locIp, connectPort);
 
 
 			pm_client_addr.sin_family = AF_INET;
@@ -415,12 +424,12 @@ void *recvHandler(void *pObj) {
 					//printf("Client %s saved\n", locUsr);
 				}
 				else {
-					//printf("Unable to add %s to database, possibly out of space\n", locUsr);
+					printf("Unable to add %s to database, possibly out of space\n", locUsr);
 				}
 			}
 		}
 
-		else if (strstr(recvBuf, "ADMIN>") != NULL) {
+		else if (strstr(recvBuf, "ADMIN>") != NULL) {			//remove user 'x' from hist on admin msg
 			printf("\n%s\n%s>", recvBuf, userId);
 			fflush(stdout);
 			if (strstr(recvBuf, "disconnected") != NULL) {
@@ -475,9 +484,9 @@ void *pm_acceptHandler(void *sockid) {
 		printf("New Connection %d from %d\n", newsockfd, client_addr.sin_addr.s_addr);
 		fflush(stdout);
 		
-		pm_ssl=SSL_new(pm_ctx);
-		pm_sbio=BIO_new_socket(newsockfd, BIO_NOCLOSE);
-		SSL_set_bio(pm_ssl,pm_sbio,pm_sbio);
+		pm_ssl = SSL_new(pm_ctx);
+		pm_sbio = BIO_new_socket(newsockfd, BIO_NOCLOSE);
+		SSL_set_bio(pm_ssl, pm_sbio, pm_sbio);
 		if(SSL_accept(pm_ssl)<=0)	{
 			printf("\nSSL Handshake Error\n");
 			ERR_print_errors_fp(stdout);
@@ -488,7 +497,6 @@ void *pm_acceptHandler(void *sockid) {
 			close(newsockfd);
 			exit(1);
 		}
-		//Verify_Peer(pm_ssl, "server");
 		
 		pObject.pSock = newsockfd;
 		pObject.pSsl = pm_ssl;
@@ -527,15 +535,15 @@ void *pm_recvHandler(void *pObj) {
 			int cnt = 0;
 			char *uid;
 			
-			printf("Will parse: %s\n", recvBuf);
+			//printf("Will parse: %s\n", recvBuf);
 			tmp = strpbrk(recvBuf, " ");
-			printf("Have: %s\n", tmp);
+			//printf("Have: %s\n", tmp);
 			do {
 				tmp--;
 				cnt ++;
 			}while(tmp != recvBuf);
 			
-			printf("stats: cnt = %d, tmp = %s\n", cnt, tmp);
+			//printf("stats: cnt = %d, tmp = %s\n", cnt, tmp);
 			
 			uid = (char*) malloc ((cnt+1)*sizeof(char));
 			strncpy(uid, tmp, cnt);
@@ -544,6 +552,10 @@ void *pm_recvHandler(void *pObj) {
 			if (Verify_Peer(pm_ssl, uid) < 0) {
 				//invalid certificate, disconnect
 				printf("Exiting because of invalid certificate: %s\n", uid);
+				BIO_free_all(pm_sbio);
+				SSL_shutdown(pm_ssl);
+				//SSL_free(pm_ssl);
+				pthread_exit(NULL);
 			}
 			flag_verified = 1;
 		}
