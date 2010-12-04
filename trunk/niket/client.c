@@ -54,17 +54,6 @@ typedef struct New_User_List {
 	SSL *ssl;
 }New_User_List;
 
-/* typedef struct File_Data{
- FILE *file_ptr;
- long file_size;
- char *file_path;
- char file_buffer[MAX_FILE_SIZE];
- }File_Data;
- 
- File_Data CA_CRT;
- File_Data Client_CRT;
- File_Data Client_Private_Key; */
-
 
 //thread / function declaration
 void *connection(void *U_List);
@@ -247,19 +236,21 @@ int main(int argc, char *argv[])
 			
 			if(result == -1)
 			{
+				recv_flag = 1;
+				bzero(isr_data,sizeof(isr_data));
 				
 				//send(sock,u_id,strlen(u_id), 0);
 				SSL_write(ssl,u_id,strlen(u_id));
 				
-				bzero(isr_data,sizeof(isr_data));
-				recv_flag = 1;
 				while(recv_flag);
+
 				recv_flag = 1;
 				
 				if(strcmp(isr_data,"User not Found.") == 0)
 				{
 					printf("User not Found\n");
 					//break;
+					fflush(stdout);
 				}
 				
 				else 
@@ -273,8 +264,7 @@ int main(int argc, char *argv[])
 					i_addr[char_cnt] = '\0';
 					
 					strcpy(port_no,&isr_data[char_cnt+1]);
-					
-					
+
 					struct sockaddr_in client_addr;
 					int sock2;
 					BIO *sbio2;
@@ -304,6 +294,7 @@ int main(int argc, char *argv[])
 					ssl2=SSL_new(ctx);
 					sbio2=BIO_new_socket(sock2,BIO_NOCLOSE);
 					SSL_set_bio(ssl2,sbio2,sbio2);
+					
 					if(SSL_connect(ssl2)<=0)
 					{
 						printf("\nSSL Handshake Error\n");
@@ -432,6 +423,7 @@ void SIGIOHandler(int signalType)		//Socket Data Recv ISR
 		
 		else if(nbytes>0)
 		{
+			fflush(stdout);
 			if(recv_data[0] == '/')	
 			{
 				strcpy(isr_data,&recv_data[1]);
@@ -714,6 +706,7 @@ void *connection(void *U_List)
 		{
 			printf("\nPrivate Connection with Client: %s has been broken.\n",User_Data->User_Name);
 			printf("\nEnter Command: ");
+			fflush(stdout);
 			pthread_mutex_lock(&mutex);
 			//remove myself from the vector of active clients
 			Free_List[Free_Count] = User_Data->User_No;
@@ -772,30 +765,31 @@ SSL_CTX *Initialize_SSL_Context(char *Certificate, char *Private_Key, char *CA_C
 		return 0;
 	}
 	
-	printf("\nLoading certificates...");
-	
+	printf("\nLoading certificates...");	
 	if(!SSL_CTX_use_certificate_file(ctx, Certificate, SSL_FILETYPE_PEM))
 	{
-		printf("\nUnable to load Certificate...");
+		printf("\nUnable to load Certificate...\n");
 		ERR_print_errors_fp(stdout);
 		SSL_CTX_free(ctx);
-		return 0;
-	}
-	if(!SSL_CTX_use_PrivateKey_file(ctx, Private_Key, SSL_FILETYPE_PEM))
-	{
-		printf("Unable to load Private_Key File.\n");
-		ERR_print_errors_fp(stdout);
-		SSL_CTX_free(ctx);
-		return 0;
+		exit (0);
 	}
 	
 	printf("\nLoading Key File...");
-	if(!SSL_CTX_load_verify_locations(ctx, CA_Certificate, NULL))
+	if(!SSL_CTX_use_PrivateKey_file(ctx, Private_Key, SSL_FILETYPE_PEM))
 	{
-		printf("Unable to load CA Certificate\n");
+		printf("Unable to load Private_Key File...\n");
 		ERR_print_errors_fp(stdout);
 		SSL_CTX_free(ctx);
-		return 0;
+		exit (0);
+	}
+	
+	printf("\nLoading TrustStore File...");
+	if(!SSL_CTX_load_verify_locations(ctx, CA_Certificate, NULL))
+	{
+		printf("Unable to load CA Certificate...\n");
+		ERR_print_errors_fp(stdout);
+		SSL_CTX_free(ctx);
+		exit (0);
 	}
 	
 	SSL_CTX_set_verify_depth(ctx,1);
@@ -848,6 +842,16 @@ int Verify_Peer(SSL *ssl, char *name)
 }
 
 
+/* typedef struct File_Data{
+ FILE *file_ptr;
+ long file_size;
+ char *file_path;
+ char file_buffer[MAX_FILE_SIZE];
+ }File_Data;
+ 
+ File_Data CA_CRT;
+ File_Data Client_CRT;
+ File_Data Client_Private_Key; */
 
 
 /* void File_Stat(File_Data *file_data)

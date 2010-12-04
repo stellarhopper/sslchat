@@ -105,7 +105,7 @@ int main(int argc,char *argv[])
     //check arguments here
     if (argc != 6)  
 	{
-		printf("usage is: ./pserver <port#><logFile>\n");
+		printf("usage is: ./pserver <port#> <logFile> <CA Certificate Path> <client_certificate_path> <client_private_key_path> \n");
 		return 0;
     }
 	
@@ -641,30 +641,31 @@ SSL_CTX *Initialize_SSL_Context(char *Certificate, char *Private_Key, char *CA_C
 		return 0;
 	}
 	
-	printf("\nLoading certificates...");
-	
+	printf("\nLoading certificates...");	
 	if(!SSL_CTX_use_certificate_file(ctx, Certificate, SSL_FILETYPE_PEM))
 	{
-		printf("\nUnable to load Certificate...");
+		printf("\nUnable to load Certificate...\n");
 		ERR_print_errors_fp(stdout);
 		SSL_CTX_free(ctx);
-		return 0;
-	}
-	if(!SSL_CTX_use_PrivateKey_file(ctx, Private_Key, SSL_FILETYPE_PEM))
-	{
-		printf("Unable to load Private_Key File.\n");
-		ERR_print_errors_fp(stdout);
-		SSL_CTX_free(ctx);
-		return 0;
+		exit (0);
 	}
 	
 	printf("\nLoading Key File...");
-	if(!SSL_CTX_load_verify_locations(ctx, CA_Certificate, NULL))
+	if(!SSL_CTX_use_PrivateKey_file(ctx, Private_Key, SSL_FILETYPE_PEM))
 	{
-		printf("Unable to load CA Certificate\n");
+		printf("Unable to load Private_Key File...\n");
 		ERR_print_errors_fp(stdout);
 		SSL_CTX_free(ctx);
-		return 0;
+		exit (0);
+	}
+	
+	printf("\nLoading TrustStore File...");
+	if(!SSL_CTX_load_verify_locations(ctx, CA_Certificate, NULL))
+	{
+		printf("Unable to load CA Certificate...\n");
+		ERR_print_errors_fp(stdout);
+		SSL_CTX_free(ctx);
+		exit (0);
 	}
 	
 	SSL_CTX_set_verify_depth(ctx,1);
@@ -674,24 +675,6 @@ SSL_CTX *Initialize_SSL_Context(char *Certificate, char *Private_Key, char *CA_C
 	
 	return ctx;
 }
-
-/* void File_Stat(File_Data *file_data)
- {
- file_data->file_ptr = fopen(file_data->file_path,"r");
- if(file_data->file_ptr == NULL || file_data->file_ptr<=0)
- {
- printf("File not Found\n");
- exit(1);
- }
- else
- {
- file_data->file_size = fread(file_data->file_buffer, 1,MAX_FILE_SIZE, file_data->file_ptr);
- if(! file_data->file_size)
- exit(1);
- 
- fclose(file_data->file_ptr);
- }
- } */
 
 int Verify_Peer(SSL *ssl, char *name)
 {
@@ -727,5 +710,6 @@ int Verify_Peer(SSL *ssl, char *name)
 		ERR_print_errors_fp(stdout);
 		return(-1);
 	} 
+	
 	return (1);
 }
