@@ -164,7 +164,6 @@ int main(int argc,char *argv[]) {
 		if((SSL_accept(newSsl) <= 0)) {
 			printf("\nSSL Handshake Error\n");
 			ERR_print_errors_fp(stdout);
-			//exit_flag = 1;
 		}
 		else {
 			retval = addToHist(newsockfd, clientIp, 0, "default", newSsl, newBio);
@@ -282,7 +281,11 @@ void *connection(void *pObj) {
 	if (Verify_Peer(ssl, userId) < 0) {
 		//invalid certificate, kick
 		connLost(myClientIdx, userId);
-		printf("Exiting thread because of invalid certificate msg\n");
+		printf("Exiting thread because of invalid certificate from client\n");
+		BIO_free_all(sbio);
+		SSL_shutdown(ssl);
+		//SSL_free(ssl);
+		close(s);
 		pthread_exit(NULL);
 	}
 	
